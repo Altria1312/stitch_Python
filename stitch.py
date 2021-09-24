@@ -367,6 +367,9 @@ class Stitch:
                 kpt1 = kpt2
                 des1 = des2
 
+            self.show(img1)
+            cv2.imwrite("./imgg.jpg", img1)
+
 
 
 
@@ -378,10 +381,10 @@ class Stitch:
 if __name__ == "__main__":
     path1 = "../../data/20210817002/20210817002_0006.JPG"
     path2 = "../../data/20210817002/20210817002_0007.JPG"
-    img1 = cv2.imread(path1)
-    img2 = cv2.imread(path2)
+    img_1 = cv2.imread(path1)
+    img_2 = cv2.imread(path2)
 
-    s = Stitch([img1, img2])
+    s = Stitch([img_1, img_2])
     s.stitch()
 
 pass
