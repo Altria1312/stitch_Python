@@ -4,9 +4,12 @@ import time
 from math import exp, sin, pi
 
 class Stitch:
-    def __init__(self, imgs):
-        self.img1 = imgs[0]
-        self.img2 = imgs[1]
+    def __init__(self, imgs, isList=False):
+        if isList:
+            self.img_list = imgs
+        else:
+            self.img1 = imgs[0]
+            self.img2 = imgs[1]
 
     def detect_compute(self, img):
         extractor = cv2.xfeatures2d.SURF_create()
@@ -297,6 +300,79 @@ class Stitch:
         mask = cv2.merge([mask, mask, mask])
         cut = mask * cut + (1-mask) * self.img2
         self.img[:self.img2.shape[0], :self.img2.shape[1]] = cut
+
+    def mul_sitich(self):
+        if isinstance(self.img_list, str):
+            scale = 5
+            h = int(self.img1.shape[0] / scale)
+            w = int(self.img1.shape[1] / scale)
+            # 缩放
+            img1 = cv2.imread(self.img_list[0])
+            src1 = cv2.resize(img1, (w, h), interpolation=cv2.INTER_NEAREST)
+            kpt1, des1 = self.detect_compute(src1)
+
+            n = len(self.img_list)
+            matcher = cv2.FlannBasedMatcher()
+            threhold = 0.4
+            for i in range(1, n):
+                # 计算特征点
+                img2 = cv2.imread(self.img_list[i])
+                src2 = cv2.resize(img2, (w, h), interpolation=cv2.INTER_NEAREST)
+                kpt2, des2 = self.detect_compute(src2)
+                # 匹配
+                matches = matcher.knnMatch(des1, des2, k=2)
+                matched = []
+                for m, n in matches:
+                    if m.distance < threhold * n.distance:
+                        matched.append(m)
+
+                ori = np.zeros((len(matched), 2))
+                target = np.zeros_like(ori)
+                for i in range(len(matched)):
+                    ori[i, 0] = kpt1[matched[i].queryIdx].pt[0] * scale
+                    ori[i, 1] = kpt1[matched[i].queryIdx].pt[1] * scale
+                    # ori.append((x, y))
+
+                    target[i, 0] = kpt2[matched[i].trainIdx].pt[0] * scale
+                    target[i, 1] = kpt2[matched[i].trainIdx].pt[1] * scale
+                    # target.append((x, y))
+
+                H, _ = cv2.findHomography(ori, target, cv2.RANSAC)
+
+                # img = cv2.copyMakeBorder(img2, 0, img2.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+                img1 = cv2.warpPerspective(img1, H, (img2.shape[1], img1.shape[0] + img2.shape[0]))
+                # self.show(img)
+
+                # 权重向两边递减
+                cut = img1[:img2.shape[0], :img2.shape[1]]
+                mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
+
+                # # 像素值判断
+                mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)[1]
+                mask = cv2.GaussianBlur(mask, (5,5), 1)
+
+                # mask = cv2.copyMakeBorder(mask, 0, 1, 0, 0, cv2.BORDER_CONSTANT, value=0)
+                mask = cv2.distanceTransform(mask, cv2.DIST_L1, 3)
+
+                cv2.normalize(mask, mask, alpha=0, beta=1,
+                              norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+
+                # s = mask.astype(np.uint8)
+                # self.show(s)
+                # mask = np.where(mask > 0.7, mask, 0)
+                # mask = mask[:-1]
+                mask = cv2.merge([mask, mask, mask])
+                img1[:img2.shape[0], :img2.shape[1]] = mask * cut + (1-mask) * img2
+
+                kpt1 = kpt2
+                des1 = des2
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
