@@ -1,7 +1,9 @@
 import cv2
 import numpy as np
 import time
+import matplotlib.pyplot as plt
 from math import exp, sin, pi
+import threading
 
 class Stitch:
     def __init__(self, imgs, isList=False):
@@ -88,56 +90,82 @@ class Stitch:
 
         self.H, _ = cv2.findHomography(ori, target, cv2.RANSAC)
 
+        # 重合边界
+        pts = np.array([[0, self.img1.shape[1], self.img1.shape[1], 0],
+                        [0, 0, self.img1.shape[0], self.img1.shape[0]],
+                        [1, 1, 1, 1]])
+        self.pts_H = self.H @ pts
+        self.pts_H = self.pts_H / self.pts_H[-1, :]
+        pass
+        # # 曝光差异
+        # ori = np.round(ori).astype(np.int32)
+        # target = np.round(target).astype(np.int32)
+        #
+        # bgr1 = self.img1[ori[:,1], ori[:,0]]
+        # bgr2 = self.img2[target[:,1], target[:,1]]
+        #
+        # res = np.zeros((3, 2))
+        # for i in range(3):
+        #     A = np.vstack([bgr2[:, i], np.zeros(bgr2.shape[0])]).T
+        #     res[i,0], res[i,1] = np.linalg.lstsq(A, bgr1[:, i], rcond=None)[0]
+        #
+        # self.img2 = self.img2 * res[:, 0]# + res[:, 1]
+        # self.img2 = self.img2.astype(np.uint8)
+
+
     def stitch(self):
         t1 = time.time()
         self.match()
+        # self.show(self.img2)
         t2 = time.time()
         # img = cv2.copyMakeBorder(img2, 0, img2.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
         self.img = cv2.warpPerspective(self.img1, self.H, (self.img2.shape[1], 2 * self.img2.shape[0]))
+
         # self.show(img)
         t3 = time.time()
-
-        # 权重向两边递减
-        cut = self.img[:self.img2.shape[0], :self.img2.shape[1]]
-        mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
-
-        # # 像素值判断
-        mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)[1]
-        mask = cv2.GaussianBlur(mask, (5,5), 1)
-        t4 = time.time()
-
-        # mask = cv2.copyMakeBorder(mask, 0, 1, 0, 0, cv2.BORDER_CONSTANT, value=0)
-        mask = cv2.distanceTransform(mask, cv2.DIST_L1, 3)
-
-        t5 = time.time()
-
-        cv2.normalize(mask, mask, alpha=0, beta=1,
-                      norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-
-        # s = mask.astype(np.uint8)
-        # self.show(s)
-        # mask = np.where(mask > 0.7, mask, 0)
-        t6 = time.time()
-        # mask = mask[:-1]
-        mask = cv2.merge([mask, mask, mask])
-        t7 = time.time()
-        self.img[:self.img2.shape[0], :self.img2.shape[1]] = mask * cut + (1-mask) * self.img2
+        # #============================================================
+        # # 权重向两边递减
+        # cut = self.img[:self.img2.shape[0], :self.img2.shape[1]]
+        # mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
+        #
+        # # # 像素值判断
+        # mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)[1]
+        # mask = cv2.GaussianBlur(mask, (5,5), 1)
+        # t4 = time.time()
+        #
+        # # mask = cv2.copyMakeBorder(mask, 0, 1, 0, 0, cv2.BORDER_CONSTANT, value=0)
+        # mask = cv2.distanceTransform(mask, cv2.DIST_L1, 3)
+        #
+        # t5 = time.time()
+        #
+        # cv2.normalize(mask, mask, alpha=0, beta=1,
+        #               norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        #
+        # # s = mask.astype(np.uint8)
+        # # self.show(s)
+        # # mask = np.where(mask > 0.7, mask, 0)
+        # t6 = time.time()
+        # # mask = mask[:-1]
+        # mask = cv2.merge([mask, mask, mask])
+        # t7 = time.time()
+        # self.img[:self.img2.shape[0], :self.img2.shape[1]] = mask * cut + (1-mask) * self.img2
+        # #============================================================
 
         # # Laplacian金字塔图像融合
         # self.blend()
 
-        # # 最![](thumbnail.jpg)佳缝合线
-        # self.baseline()
+        # 最佳缝合线
+        self.baseline()
 
         t8 = time.time()
-        print("matching:%f"%(t2-t1))
-        print("warping:%f"%(t3-t2))
-        # print("fushing:%f cond:%f dis:%f norm:%f expand:%f stitch:%f" % (t8-t3, t4-t3, t5-t4, t6-t5, t7-t6, t8-t7))
-        print("fushing:%f" % (t8-t3))
+        # print("matching:%f"%(t2-t1))
+        # print("warping:%f"%(t3-t2))
+        # # print("fushing:%f cond:%f dis:%f norm:%f expand:%f stitch:%f" % (t8-t3, t4-t3, t5-t4, t6-t5, t7-t6, t8-t7))
+        # print("fushing:%f" % (t8-t3))
         print("total:%f"%(t8-t1))
         # self.show(self.img)
         #
-        # cv2.imwrite("./imgg.jpg", self.img)
+        cv2.imwrite("./imggg.jpg", self.img)
 
     def gauss(self, img, n):
         # 构建高斯金字塔
@@ -192,6 +220,33 @@ class Stitch:
 
         self.img[:self.img2.shape[0], :self.img2.shape[1]] = start.astype(np.uint8)
 
+    def baseline_search(self, beg, end, w):
+        end = min(end, w)
+        for i in range(1, w):
+            mids = self.path_row[beg:end, i-1]
+            lefts = np.maximum(mids-1, self.min_val)
+            rights = np.minimum(mids+1, self.max_val)
+            temp = np.vstack([lefts, mids, rights])
+            rg = np.arange(temp.shape[1])
+
+            mid_E = self.E[mids, i]
+            left_E = self.E[lefts, i]
+            right_E = self.E[rights, i]
+
+            temp_E = np.vstack([left_E, mid_E, right_E])
+            idx = np.argmin(temp_E, axis=0)
+            temp_E = temp_E[idx, rg]
+
+            self.path_energy[beg:end] = self.path_energy[beg:end] + temp_E
+            idx = temp[idx, rg]#.reshape((-1, 1))
+            self.path_row[beg:end, i] = idx
+
+    def mask_filter(self, w):
+        for i in range(self.min_val, self.max_val+1):
+            for j in range(w):
+                if i < opt_path[j] and self.mask[i, j] > 0:
+                    self.mask[i, j] = 0
+
     def baseline(self):
         cut = self.img[:self.img2.shape[0], :self.img2.shape[1]]
         src1 = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
@@ -199,7 +254,7 @@ class Stitch:
 
         mask = src1 > 0
         mask = mask.astype(np.uint8)
-        mask = cv2.GaussianBlur(mask, (5,5), 1)
+        self.mask = cv2.GaussianBlur(mask, (5,5), 1)
 
         E_color = (src2 - src1) ** 2
 
@@ -217,7 +272,7 @@ class Stitch:
 
         E_geometry = (src1_x - src2_x) * (src1_y - src2_y)
 
-        E = E_color + E_geometry
+        self.E = E_color + E_geometry
 
         # 确定初始位置
         h, w = src1.shape
@@ -225,30 +280,49 @@ class Stitch:
         path_col = np.arange(w)
         path_row = [i for i in range(h) if src1[i, t] > 0]
         path_row = np.array(path_row).reshape(-1, 1)
-        min_val = np.min(path_row)
-        max_val = np.max(path_row)
+        self.path_row = np.tile(path_row, w)
+        self.min_val = np.min(path_row)
+        self.max_val = np.max(path_row)
         # 初始能量
-        path_energy = np.squeeze(E[path_row, 0])
-        # 生长
+        self.path_energy = np.squeeze(self.E[path_row, 0])
+
+        # # 生长(多线程）
+        # num_thread = 1
+        # width = h // 1
+        # beg = 0
+        # end = 0
+        # worker_thread = []
+        #
+        # for i in range(num_thread):
+        #     beg = end
+        #     end = beg + width
+        #     t = threading.Thread(target=self.baseline_search, args=(beg, end, w))
+        #     worker_thread.append(t)
+        #     t.start()
+        #
+        # for t in worker_thread:
+        #     t.join()
+        #     print(t.name)
+
+        # 单线程
         for i in range(1, w):
-            mids = path_row[:, -1]
-            lefts = np.maximum(mids-1, min_val)
-            rights = np.minimum(mids+1, max_val)
+            mids = self.path_row[:, i-1]
+            lefts = np.maximum(mids-1, self.min_val)
+            rights = np.minimum(mids+1, self.max_val)
             temp = np.vstack([lefts, mids, rights])
             rg = np.arange(temp.shape[1])
 
-            mid_E = E[mids, i]
-            left_E = E[lefts, i]
-            right_E = E[rights, i]
+            mid_E = self.E[mids, i]
+            left_E = self.E[lefts, i]
+            right_E = self.E[rights, i]
 
             temp_E = np.vstack([left_E, mid_E, right_E])
             idx = np.argmin(temp_E, axis=0)
             temp_E = temp_E[idx, rg]
 
-            path_energy = path_energy + temp_E
-            idx = temp[idx, rg].reshape((-1, 1))
-            path_row = np.hstack([path_row, idx])
-
+            self.path_energy = self.path_energy + temp_E
+            idx = temp[idx, rg]
+            self.path_row[:, i] = idx
         # # 最小割算法
         # graph = maxflow.GraphInt()
         # nodeids = graph.add_grid_nodes((max_val-min_val+1, w))
@@ -270,44 +344,46 @@ class Stitch:
         # ttt = res.max()
         # self.show(res)
 
-        opt_idx = np.argmin(path_energy)
-        opt_path = path_row[opt_idx]
+        opt_idx = np.argmin(self.path_energy)
+        opt_path = self.path_row[opt_idx]
 
-        for i in range(min_val, max_val+1):
-            for j in range(w):
-                if i < opt_path[j] and mask[i, j] > 0:
-                    mask[i, j] = 0
+        rg = np.arange(self.min_val, self.max_val+1)
+        for j in range(w):
+            col = rg > opt_path[j]
+            self.mask[self.min_val:self.max_val+1, j] = self.mask[self.min_val:self.max_val+1, j] * col
 
         # 权重向两边递减
-        # t = mask * 255
-        # self.show(t)
-        # mask = cv2.copyMakeBorder(mask, 0, 1, 0, 0, cv2.BODER_CONSRTANT, value=0)
-        # mask = cv2.distanceTransform(mask, cv2.DIST_L1, 3)
-        #
-        # cv2.normalize(mask, mask, alpha=0, beta=1,
-        #               norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        blend = 20
+        self.mask = self.mask.astype(np.float32)
+        for i in range(w):
+            for j in range(-blend, blend):
+                hh = min(h, max(0, opt_path[i] + j))
+                self.mask[hh, i] = (blend + j) / (2 * blend)
 
-        # 三角函数递减
-        T = 100
-        k = pi / T
-        for i, r in enumerate(opt_path):
-            for j in range(-T, T):
-                mask[r+j, i] = sin(k * (r+j)) / 2 + 0.5
+        t = self.mask * 255
+        t = t.astype(np.uint8)
+        cv2.imwrite("./mask.jpg", t)
 
-        # s = mask.astype(np.uint8)
-        # self.show(s)
+        # # 三角函数递减
+        # T = 100
+        # k = pi / T
+        # for i, r in enumerate(opt_path):
+        #     for j in range(-T, T):
+        #         mask[r+j, i] = sin(k * (r+j)) / 2 + 0.5
+
         # mask = mask[:-1]
-        mask = cv2.merge([mask, mask, mask])
-        cut = mask * cut + (1-mask) * self.img2
+
+        self.mask = cv2.merge([self.mask, self.mask, self.mask])
+        cut = self.mask * cut + (1-self.mask) * self.img2
         self.img[:self.img2.shape[0], :self.img2.shape[1]] = cut
 
     def mul_sitich(self):
-        if isinstance(self.img_list, str):
+        if hasattr(self, "img_list"):
             scale = 5
-            h = int(self.img1.shape[0] / scale)
-            w = int(self.img1.shape[1] / scale)
             # 缩放
             img1 = cv2.imread(self.img_list[0])
+            h = int(img1.shape[0] / scale)
+            w = int(img1.shape[1] / scale)
             src1 = cv2.resize(img1, (w, h), interpolation=cv2.INTER_NEAREST)
             kpt1, des1 = self.detect_compute(src1)
 
@@ -366,24 +442,24 @@ class Stitch:
 
                 kpt1 = kpt2
                 des1 = des2
+                self.show(img1)
 
             self.show(img1)
             cv2.imwrite("./imgg.jpg", img1)
-
-
-
-
-
-
-
+        else:
+            print("None")
 
 
 if __name__ == "__main__":
-    path1 = "../../data/20210817002/20210817002_0006.JPG"
-    path2 = "../../data/20210817002/20210817002_0007.JPG"
+    path1 = "../../data/20210817002/20210817002_0005.JPG"
+    path2 = "../../data/20210817002/20210817002_0006.JPG"
     img_1 = cv2.imread(path1)
     img_2 = cv2.imread(path2)
 
+    imgs = ["../../data/20210817002/20210817002_0005.JPG",
+            "../../data/20210817002/20210817002_0006.JPG",
+            "../../data/20210817002/20210817002_0007.JPG",
+            "../../data/20210817002/20210817002_0008.JPG"]
     s = Stitch([img_1, img_2])
     s.stitch()
 
