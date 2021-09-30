@@ -280,11 +280,11 @@ class Stitch:
         path_col = np.arange(w)
         path_row = [i for i in range(h) if src1[i, t] > 0]
         path_row = np.array(path_row).reshape(-1, 1)
-        self.path_row = np.tile(path_row, w)
-        self.min_val = np.min(path_row)
+        self.path_row = np.tile(path_row[1:-1], w)
+        self.min_val = np.min(path_row) + 1
         self.max_val = np.max(path_row)
         # 初始能量
-        self.path_energy = np.squeeze(self.E[path_row, 0])
+        self.path_energy = np.squeeze(self.E[self.path_row[:,0], 0])
 
         # # 生长(多线程）
         # num_thread = 1
@@ -304,25 +304,51 @@ class Stitch:
         #     t.join()
         #     print(t.name)
 
-        # 单线程
+        # # 单线程
+        # for i in range(1, w):
+        #     mids = self.path_row[:, i-1]
+        #     lefts = np.maximum(mids-1, self.min_val)
+        #     rights = np.minimum(mids+1, self.max_val)
+        #     temp = np.vstack([lefts, mids, rights])
+        #     rg = np.arange(temp.shape[1])
+        #
+        #     mid_E = self.E[mids, i]
+        #     left_E = self.E[lefts, i]
+        #     right_E = self.E[rights, i]
+        #
+        #     temp_E = np.vstack([left_E, mid_E, right_E])
+        #     idx = np.argmin(temp_E, axis=0)
+        #     temp_E = temp_E[idx, rg]
+        #
+        #     self.path_energy = self.path_energy + temp_E
+        #     idx = temp[idx, rg]
+        #     self.path_row[:, i] = idx
+
+        # 单线程2
+        # mids = np.expand_dims(self.path_row[:, 1:], axis=-1)
+        # lefts = mids - 1
+        # rights = mids + 1
+        # temp = np.concatenate([lefts, mids, rights], axis=-1)
+
+        mids_E = np.expand_dims(self.E[self.min_val:self.max_val], axis=-1)
+        lefts_E = np.expand_dims(self.E[self.min_val-1:self.max_val-1], axis=-1)
+        rights_E = np.expand_dims(self.E[self.min_val+1:self.max_val+1], axis=-1)
+        temp_E = np.concatenate([lefts_E, mids_E, rights_E], axis=-1)
+        idx = np.argmin(temp_E, axis=-1)
+        # rg_x = np.tile(np.arange(w), [self.path_row.shape[0], 1])
+        rg_y = np.tile(np.arange(temp_E.shape[0]).reshape((-1,1)), temp_E.shape[1])
+        # temp_E = temp_E[rg_y, rg_x-1, idx]
+        rg_y[:, 1:] += idx[:, 1:]
+        rg_y[:, 0] += 1
+        path_row = np.tile(path_row, w)
+        path_row[1:-1, 1:] += idx[:, 1:] - 1
+        # path_row = path_row.reshape((-1,))
         for i in range(1, w):
-            mids = self.path_row[:, i-1]
-            lefts = np.maximum(mids-1, self.min_val)
-            rights = np.minimum(mids+1, self.max_val)
-            temp = np.vstack([lefts, mids, rights])
-            rg = np.arange(temp.shape[1])
+            self.path_row[:, i] = path_row[rg_y[:, i-1], i]
+            self.path_energy += self.E[self.path_row[:, i], i]
 
-            mid_E = self.E[mids, i]
-            left_E = self.E[lefts, i]
-            right_E = self.E[rights, i]
 
-            temp_E = np.vstack([left_E, mid_E, right_E])
-            idx = np.argmin(temp_E, axis=0)
-            temp_E = temp_E[idx, rg]
 
-            self.path_energy = self.path_energy + temp_E
-            idx = temp[idx, rg]
-            self.path_row[:, i] = idx
         # # 最小割算法
         # graph = maxflow.GraphInt()
         # nodeids = graph.add_grid_nodes((max_val-min_val+1, w))
@@ -352,6 +378,7 @@ class Stitch:
             col = rg > opt_path[j]
             self.mask[self.min_val:self.max_val+1, j] = self.mask[self.min_val:self.max_val+1, j] * col
 
+        self.show(self.mask * 255)
         # 权重向两边递减
         blend = 20
         self.mask = self.mask.astype(np.float32)
@@ -359,10 +386,6 @@ class Stitch:
             for j in range(-blend, blend):
                 hh = min(h, max(0, opt_path[i] + j))
                 self.mask[hh, i] = (blend + j) / (2 * blend)
-
-        t = self.mask * 255
-        t = t.astype(np.uint8)
-        cv2.imwrite("./mask.jpg", t)
 
         # # 三角函数递减
         # T = 100
