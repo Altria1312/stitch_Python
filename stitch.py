@@ -7,6 +7,7 @@ import threading
 
 class Stitch:
     def __init__(self, imgs, isList=False):
+        self.mask = ""
         if isList:
             self.img_list = imgs
         else:
@@ -14,9 +15,9 @@ class Stitch:
             self.img2 = imgs[1]
 
     def detect_compute(self, img):
-        extractor = cv2.xfeatures2d.SURF_create()
+        # extractor = cv2.xfeatures2d.SURF_create()
         # extractor = cv2.xfeatures2d_SIFT.create()
-        # extractor = cv2.SIFT_create(1000)
+        extractor = cv2.SIFT_create(1000)
         # extractor = cv2.ORB_create(500)
         return extractor.detectAndCompute(img, None)
 
@@ -88,29 +89,36 @@ class Stitch:
         # ori = np.array(ori)
         # target = np.array(target)
 
-        self.H, _ = cv2.findHomography(ori, target, cv2.RANSAC)
+        self.H, _ = cv2.findHomography(ori, target, cv2.RHO)
 
-        # 重合边界
-        pts = np.array([[0, self.img1.shape[1], self.img1.shape[1], 0],
-                        [0, 0, self.img1.shape[0], self.img1.shape[0]],
-                        [1, 1, 1, 1]])
-        self.pts_H = self.H @ pts
-        self.pts_H = self.pts_H / self.pts_H[-1, :]
-        pass
-        # # 曝光差异
-        # ori = np.round(ori).astype(np.int32)
-        # target = np.round(target).astype(np.int32)
+        # # 重合边界
+        # pts = np.array([[0, self.img1.shape[1], self.img1.shape[1], 0],
+        #                 [0, 0, self.img1.shape[0], self.img1.shape[0]],
+        #                 [1, 1, 1, 1]])
+        # pts_H = self.H @ pts
+        # pts_H /= pts_H[-1, :]
         #
-        # bgr1 = self.img1[ori[:,1], ori[:,0]]
-        # bgr2 = self.img2[target[:,1], target[:,1]]
-        #
-        # res = np.zeros((3, 2))
-        # for i in range(3):
-        #     A = np.vstack([bgr2[:, i], np.zeros(bgr2.shape[0])]).T
-        #     res[i,0], res[i,1] = np.linalg.lstsq(A, bgr1[:, i], rcond=None)[0]
-        #
-        # self.img2 = self.img2 * res[:, 0]# + res[:, 1]
-        # self.img2 = self.img2.astype(np.uint8)
+        # xy_min = np.round(np.min(pts_H, axis=1)[:-1])
+        # xy_max = np.round(np.max(pts_H, axis=1)[:-1])
+        # mins = np.maximum(xy_min, [0, 0]).astype(np.int32)
+        # maxs = np.minimum(xy_max, [self.img1.shape[1], self.img1.shape[0]]).astype(np.int32)
+        # self.tl_br = (mins, maxs)
+        # 曝光差异
+        ori = np.round(ori).astype(np.int32)
+        target = np.round(target).astype(np.int32)
+
+        i1 = cv2.GaussianBlur(self.img1, (5,5), 1)
+        i2 = cv2.GaussianBlur(self.img2, (5,5), 1)
+        bgr1 = i1[ori[:,1], ori[:,0]]
+        bgr2 = i2[target[:,1], target[:,0]]
+
+        res = np.zeros((3, 2))
+        for i in range(3):
+            A = np.vstack([bgr2[:, i], np.ones(bgr2.shape[0])]).T
+            res[i,0], res[i,1] = np.linalg.lstsq(A, bgr1[:, i], rcond=None)[0]
+
+        self.img2 = self.img2 * res[:, 0] + res[:, 1]
+        self.img2 = self.img2.astype(np.uint8)
 
 
     def stitch(self):
@@ -165,7 +173,7 @@ class Stitch:
         print("total:%f"%(t8-t1))
         # self.show(self.img)
         #
-        cv2.imwrite("./imggg.jpg", self.img)
+        cv2.imwrite("./img.jpg", self.img)
 
     def gauss(self, img, n):
         # 构建高斯金字塔
@@ -252,9 +260,14 @@ class Stitch:
         src1 = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
         src2 = cv2.cvtColor(self.img2, cv2.COLOR_BGR2GRAY)
 
-        mask = src1 > 0
-        mask = mask.astype(np.uint8)
-        self.mask = cv2.GaussianBlur(mask, (5,5), 1)
+        # mask = src1 > 0
+        # mask = mask.astype(np.uint8)
+        # self.mask = cv2.GaussianBlur(mask, (5,5), 1)
+
+        # self.mask = cv2.rectangle(np.zeros_like(src2), tuple(self.tl_br[0]), tuple(self.tl_br[1]), 255, -1)
+
+        # cut[:, :, 1] = 0.5 * cut[:, :, 1] + 0.5 * self.mask * 255
+        # self.show(cut)
 
         E_color = (src2 - src1) ** 2
 
@@ -277,12 +290,14 @@ class Stitch:
         # 确定初始位置
         h, w = src1.shape
         t = int(w/2)
-        path_col = np.arange(w)
         path_row = [i for i in range(h) if src1[i, t] > 0]
         path_row = np.array(path_row).reshape(-1, 1)
         self.path_row = np.tile(path_row[1:-1], w)
         self.min_val = np.min(path_row) + 1
         self.max_val = np.max(path_row)
+
+        path_row = np.tile(path_row, w)
+        self.path_row = path_row[1:-1]
         # 初始能量
         self.path_energy = np.squeeze(self.E[self.path_row[:,0], 0])
 
@@ -325,29 +340,25 @@ class Stitch:
         #     self.path_row[:, i] = idx
 
         # 单线程2
-        # mids = np.expand_dims(self.path_row[:, 1:], axis=-1)
-        # lefts = mids - 1
-        # rights = mids + 1
-        # temp = np.concatenate([lefts, mids, rights], axis=-1)
-
-        mids_E = np.expand_dims(self.E[self.min_val:self.max_val], axis=-1)
-        lefts_E = np.expand_dims(self.E[self.min_val-1:self.max_val-1], axis=-1)
-        rights_E = np.expand_dims(self.E[self.min_val+1:self.max_val+1], axis=-1)
-        temp_E = np.concatenate([lefts_E, mids_E, rights_E], axis=-1)
+        mids_E = self.E[self.min_val:self.max_val]
+        lefts_E = self.E[self.min_val-1:self.max_val-1]
+        rights_E = self.E[self.min_val+1:self.max_val+1]
+        temp_E = cv2.merge([lefts_E, mids_E, rights_E])
         idx = np.argmin(temp_E, axis=-1)
         # rg_x = np.tile(np.arange(w), [self.path_row.shape[0], 1])
-        rg_y = np.tile(np.arange(temp_E.shape[0]).reshape((-1,1)), temp_E.shape[1])
+        rg_y = np.tile(np.arange(path_row.shape[0]), [w,1]).T
         # temp_E = temp_E[rg_y, rg_x-1, idx]
-        rg_y[:, 1:] += idx[:, 1:]
-        rg_y[:, 0] += 1
-        path_row = np.tile(path_row, w)
-        path_row[1:-1, 1:] += idx[:, 1:] - 1
-        # path_row = path_row.reshape((-1,))
+        idx -= 1
+        rg_y[1:-1, 1:] += idx[:, 1:]
+        rg_y[0] += 1
+        rg_y[-1] -= 1
+
+        path_row[1:-1, 1:] += idx[:, 1:]
+        prev = rg_y[1:-1, 0]
         for i in range(1, w):
-            self.path_row[:, i] = path_row[rg_y[:, i-1], i]
+            self.path_row[:, i] = path_row[rg_y[prev, i], i]
             self.path_energy += self.E[self.path_row[:, i], i]
-
-
+            prev = rg_y[prev, i]
 
         # # 最小割算法
         # graph = maxflow.GraphInt()
@@ -373,19 +384,22 @@ class Stitch:
         opt_idx = np.argmin(self.path_energy)
         opt_path = self.path_row[opt_idx]
 
-        rg = np.arange(self.min_val, self.max_val+1)
-        for j in range(w):
-            col = rg > opt_path[j]
-            self.mask[self.min_val:self.max_val+1, j] = self.mask[self.min_val:self.max_val+1, j] * col
+        rg = np.tile(np.arange(h), [w, 1]).T
+        mask = np.greater(rg, opt_path).astype(np.uint8)
 
-        self.show(self.mask * 255)
+        # rg = np.arange(h)
+        # for j in range(w):
+        #     col = rg > opt_path[j]
+        #     self.mask[:, j] = self.mask[:, j] * col
+
+        # self.show(self.mask * 255)
         # 权重向两边递减
-        blend = 20
-        self.mask = self.mask.astype(np.float32)
-        for i in range(w):
-            for j in range(-blend, blend):
-                hh = min(h, max(0, opt_path[i] + j))
-                self.mask[hh, i] = (blend + j) / (2 * blend)
+        # blend = 50
+        # self.mask = self.mask.astype(np.float32)
+        # for i in range(w):
+        #     for j in range(-blend, blend):
+        #         hh = min(h, max(0, opt_path[i] + j))
+        #         self.mask[hh, i] = (blend + j) / (2 * blend)
 
         # # 三角函数递减
         # T = 100
@@ -396,7 +410,7 @@ class Stitch:
 
         # mask = mask[:-1]
 
-        self.mask = cv2.merge([self.mask, self.mask, self.mask])
+        self.mask = cv2.merge([mask, mask, mask])
         cut = self.mask * cut + (1-self.mask) * self.img2
         self.img[:self.img2.shape[0], :self.img2.shape[1]] = cut
 
@@ -474,8 +488,8 @@ class Stitch:
 
 
 if __name__ == "__main__":
-    path1 = "../../data/20210817002/20210817002_0005.JPG"
-    path2 = "../../data/20210817002/20210817002_0006.JPG"
+    path1 = "./20210817002_0006.JPG"
+    path2 = "./20210817002_0007.JPG"
     img_1 = cv2.imread(path1)
     img_2 = cv2.imread(path2)
 
@@ -486,4 +500,4 @@ if __name__ == "__main__":
     s = Stitch([img_1, img_2])
     s.stitch()
 
-pass
+    pass
