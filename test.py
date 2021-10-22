@@ -1,13 +1,15 @@
 import cv2
+import piexif
 import numpy as np
 from glob import glob
 import os
 import pathlib
-import requests
+
 import json
 import time
-from watchdog.observers import Observer
-from watchdog.events import *
+import pandas as pd
+
+
 
 
 def show(img, name="", t=0):
@@ -33,76 +35,104 @@ def dll():
     with open("./dll.txt", "w") as f:
         f.writelines(save)
 
-def request_test():
-    data = {
-        "MessageType": "GetTaskInfo",
-        "DeviceId": "Camera_0001"
-    }
-    imgdata = {
-        "MessageType": "GetImageInfo",
-        "TaskId": "20210830141816",
-        "Page": "1",
-        "PageSize": "1000"
-    }
+# def request_test():
+#     data = {
+#         "MessageType": "GetTaskInfo",
+#         "DeviceId": "Camera_0001"
+#     }
+#     imgdata = {
+#         "MessageType": "GetImageInfo",
+#         "TaskId": "20210830141816",
+#         "Page": "1",
+#         "PageSize": "1000"
+#     }
+#
+#     json_file = json.dumps(data)
+#     response = requests.get("http://124.226.212.192:6000", data=json_file, timeout=10)
+#     res = response.content.decode("utf-8")
+#     t = eval(response.json())
+#     r = eval(res)
+#     response.iter_content()
+#     url = r["Data"][5]["Url"]
+#     img_d = requests.get(url)
+#     h = img_d.headers
+#     img = img_d.content
+#     with open("test.jpg", "wb") as f:
+#         f.write(img)
+#
+#
+#     t = bytearray(img)
+#     s = cv2.imdecode(np.array(t, dtype="uint8"), cv2.IMREAD_UNCHANGED)
+#     cv2.imshow("", s)
+#     cv2.waitKey(0)
+#     cv2.destroyAllWindows()
+#
+#
+#     pass
+#
+# class mywatch(FileSystemEventHandler):
+#     def __init__(self):
+#         super(mywatch, self).__init__()
+#         # FileSystemEventHandler.__init__(self)
+#
+#     def on_created(self, event):
+#         if event.is_directory:
+#             print("dir")
+#             return 0
+#         else:
+#             print("file")
+#             return 1
+#         print(event.src_path)
 
-    json_file = json.dumps(data)
-    response = requests.get("http://124.226.212.192:6000", data=json_file, timeout=10)
-    res = response.content.decode("utf-8")
-    t = eval(response.json())
-    r = eval(res)
-    response.iter_content()
-    url = r["Data"][5]["Url"]
-    img_d = requests.get(url)
-    h = img_d.headers
-    img = img_d.content
-    with open("test.jpg", "wb") as f:
-        f.write(img)
+class A:
+    def __init__(self):
+        self.a = 1
 
+    def test(self):
+        print(self.a)
 
-    t = bytearray(img)
-    s = cv2.imdecode(np.array(t, dtype="uint8"), cv2.IMREAD_UNCHANGED)
-    cv2.imshow("", s)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+def cal_angle():
+    path = "./121-1.txt"
+    file = pd.read_table(path, comment="#", header=None, skiprows=1)
 
+    data = file.values
 
+    coord = data[data[:, 3] < 20, 8:10] * 1e7
+    coord = coord.astype(np.int32)
+    orient = []
+    for i in range(1, coord.shape[0]-1):
+        v1 = coord[i] - coord[i-1]
+        v2 = coord[i+1] - coord[i]
+        ang = v1[0] * v2[0] + v1[1] * v2[1]
+        orient.append(ang)
     pass
 
-class mywatch(FileSystemEventHandler):
-    def __init__(self):
-        super(mywatch, self).__init__()
-        # FileSystemEventHandler.__init__(self)
+def get_img_ori(img_list, n):
+    coor = np.zeros((n, 2))
+    root = "G:\\data\\20210817002"
+    for i in range(n):
+        path = os.path.join(root, img_list[i])
+        exif_dict = piexif.load(path)
+        lat = exif_dict["GPS"][piexif.GPSIFD.GPSLatitude]
+        lon = exif_dict["GPS"][piexif.GPSIFD.GPSLongitude]
 
-    def on_created(self, event):
-        if event.is_directory:
-            print("dir")
-            return 0
-        else:
-            print("file")
-            return 1
-        print(event.src_path)
+        # t = lat[1][0]/lat[1][1] / 60
+        # tt = lat[1][0]/lat[1][1]
+        coor[i, 0] = (lat[0][0]/lat[0][1] + lat[1][0]/lat[1][1] / 60 + lat[2][0]/lat[2][1] / 3600) * 1e7
+        coor[i, 1] = (lon[0][0]/lon[0][1] + lon[1][0]/lon[1][1] / 60 + lon[2][0]/lon[2][1] / 3600) * 1e7
+
+    ang = np.zeros(n)
+    v = coor[1:] - coor[:-1]
+    for i in range(1, n-1):
+        ang[i] = v[i, 0]*v[i-1, 0] + v[i, 1]*v[i-1, 1]
+
+    is_change = ang < 0
+    pass
 
 
 if __name__ == "__main__":
-    request_test()
-    path = r"G:\python\qt5\data"
-
-    h = mywatch()
-    observer = Observer()
-    observer.schedule(h, path, recursive=True)
-    observer.start()
-    print("sds")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    print("ttt")
-    observer.join()
-
-    print("sss")
-
-
+    img_list = os.listdir("G:\\data\\20210817002")
+    get_img_ori(img_list, 30)
 
 
 

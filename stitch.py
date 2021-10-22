@@ -7,7 +7,7 @@ import threading
 
 class Stitch:
     def __init__(self, imgs, isList=False):
-        self.mask = ""
+        self.mask = np.array([0])
         if isList:
             self.img_list = imgs
         else:
@@ -91,34 +91,34 @@ class Stitch:
 
         self.H, _ = cv2.findHomography(ori, target, cv2.RHO)
 
-        # # 重合边界
-        # pts = np.array([[0, self.img1.shape[1], self.img1.shape[1], 0],
-        #                 [0, 0, self.img1.shape[0], self.img1.shape[0]],
-        #                 [1, 1, 1, 1]])
-        # pts_H = self.H @ pts
-        # pts_H /= pts_H[-1, :]
+        # 重合边界
+        pts = np.array([[0, self.img1.shape[1], self.img1.shape[1], 0],
+                        [0, 0, self.img1.shape[0], self.img1.shape[0]],
+                        [1, 1, 1, 1]])
+        pts_H = self.H @ pts
+        pts_H /= pts_H[-1, :]
+
+        xy_min = np.round(np.min(pts_H, axis=1)[:-1])
+        xy_max = np.round(np.max(pts_H, axis=1)[:-1])
+        mins = np.maximum(xy_min, [0, 0]).astype(np.int32)
+        maxs = np.minimum(xy_max, [self.img1.shape[1], self.img1.shape[0]]).astype(np.int32)
+        self.tl_br = (mins, maxs)
+        # # 曝光差异
+        # ori = np.round(ori).astype(np.int32)
+        # target = np.round(target).astype(np.int32)
         #
-        # xy_min = np.round(np.min(pts_H, axis=1)[:-1])
-        # xy_max = np.round(np.max(pts_H, axis=1)[:-1])
-        # mins = np.maximum(xy_min, [0, 0]).astype(np.int32)
-        # maxs = np.minimum(xy_max, [self.img1.shape[1], self.img1.shape[0]]).astype(np.int32)
-        # self.tl_br = (mins, maxs)
-        # 曝光差异
-        ori = np.round(ori).astype(np.int32)
-        target = np.round(target).astype(np.int32)
-
-        i1 = cv2.GaussianBlur(self.img1, (5,5), 1)
-        i2 = cv2.GaussianBlur(self.img2, (5,5), 1)
-        bgr1 = i1[ori[:,1], ori[:,0]]
-        bgr2 = i2[target[:,1], target[:,0]]
-
-        res = np.zeros((3, 2))
-        for i in range(3):
-            A = np.vstack([bgr2[:, i], np.ones(bgr2.shape[0])]).T
-            res[i,0], res[i,1] = np.linalg.lstsq(A, bgr1[:, i], rcond=None)[0]
-
-        self.img2 = self.img2 * res[:, 0] + res[:, 1]
-        self.img2 = self.img2.astype(np.uint8)
+        # i1 = cv2.GaussianBlur(self.img1, (5,5), 1)
+        # i2 = cv2.GaussianBlur(self.img2, (5,5), 1)
+        # bgr1 = i1[ori[:,1], ori[:,0]]
+        # bgr2 = i2[target[:,1], target[:,0]]
+        #
+        # res = np.zeros((3, 2))
+        # for i in range(3):
+        #     A = np.vstack([bgr2[:, i], np.ones(bgr2.shape[0])]).T
+        #     res[i,0], res[i,1] = np.linalg.lstsq(A, bgr1[:, i], rcond=None)[0]
+        #
+        # self.img2 = self.img2 * res[:, 0] + res[:, 1]
+        # self.img2 = self.img2.astype(np.uint8)
 
 
     def stitch(self):
@@ -173,7 +173,7 @@ class Stitch:
         print("total:%f"%(t8-t1))
         # self.show(self.img)
         #
-        cv2.imwrite("./img.jpg", self.img)
+        cv2.imwrite("./imgg.jpg", self.img)
 
     def gauss(self, img, n):
         # 构建高斯金字塔
@@ -394,13 +394,18 @@ class Stitch:
 
         # self.show(self.mask * 255)
         # 权重向两边递减
-        # blend = 50
-        # self.mask = self.mask.astype(np.float32)
-        # for i in range(w):
-        #     for j in range(-blend, blend):
-        #         hh = min(h, max(0, opt_path[i] + j))
-        #         self.mask[hh, i] = (blend + j) / (2 * blend)
-
+        blend = 30
+        mask = mask.astype(np.float32)
+        for i in range(w):
+            for j in range(-blend, blend):
+                if opt_path[i] < -j or opt_path[i] + j >= h:
+                    continue
+                hh = opt_path[i] + j
+                mask[hh, i] = (blend + j) / (2 * blend)
+        # self.mask = np.zeros_like(mask)
+        # cv2.normalize(mask, self.mask, 0, 255, cv2.NORM_MINMAX)
+        # self.mask = self.mask.astype(np.uint8)
+        # self.show(self.mask)
         # # 三角函数递减
         # T = 100
         # k = pi / T
@@ -488,8 +493,8 @@ class Stitch:
 
 
 if __name__ == "__main__":
-    path1 = "./20210817002_0006.JPG"
-    path2 = "./20210817002_0007.JPG"
+    path1 = "../../data/20210817002/20210817002_0005.JPG"
+    path2 = "../../data/20210817002/20210817002_0006.JPG"
     img_1 = cv2.imread(path1)
     img_2 = cv2.imread(path2)
 
