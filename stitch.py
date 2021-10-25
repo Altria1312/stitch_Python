@@ -493,8 +493,8 @@ class Stitch:
 
 
 if __name__ == "__main__":
-    path1 = "../../data/20210817002/20210817002_0005.JPG"
-    path2 = "../../data/20210817002/20210817002_0006.JPG"
+    path1 = "../../data/20210817002/20210817002_0006.JPG"
+    path2 = "../../data/20210817002/20210817002_0007.JPG"
     img_1 = cv2.imread(path1)
     img_2 = cv2.imread(path2)
 

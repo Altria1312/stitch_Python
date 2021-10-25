@@ -76,11 +76,13 @@ class myStitcher:
         pts_H = H @ pts
         pts_H /= pts_H[-1, :]
 
-        xy_min = np.round(np.min(pts_H, axis=1)[:-1])
-        xy_max = np.round(np.max(pts_H, axis=1)[:-1])
-        mins = np.maximum(xy_min, [0, 0]).astype(np.int32)
-        maxs = np.minimum(xy_max, [img.shape[1], img.shape[0]]).astype(np.int32)
-        return maxs[1] + img.shape[0]
+        xy_min = np.round(np.min(pts_H, axis=1)[:-1]).astype(np.int32)
+        xy_max = np.round(np.max(pts_H, axis=1)[:-1]).astype(np.int32)
+
+        left = 0 if xy_min[0] >= 0 else -xy_min[0]
+        right = self.w if xy_max[0] <= self.w else xy_max[0]
+        buttom = xy_max[1]
+        return left, right, buttom
 
     def weighted_blend(self):
         pass
@@ -234,25 +236,30 @@ class myStitcher:
             # 还原特征点坐标
             src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
 
-            dts = dts + np.array([1000, 0])
-            if id != 1:
-                src = src + np.array([1000, 0])
+            # dts = dts + np.array([1000, 0])
+            # if id != 1:
+            #     src = src + np.array([1000, 0])
 
             # 计算映射矩阵
             H, _ = cv2.findHomography(src, dts, cv2.RANSAC)
-            w_expand = self.w + 2000
-            h_expand = self.get_warp_shape(H, img)
+            size = self.get_warp_shape(H, img)
+            H[0, -1] += size[0]
+            w_expand = size[1] + size[0]
+            h_expand = size[2]
             # 变换
             img = cv2.warpPerspective(img, H, (w_expand, h_expand))
 
-            cut = img[0:self.h, 1000:1000+self.w]
-            img[0:self.h, 1000:1000+self.w] = self.opt_seam(cut, next_img)
+            cut = img[0:self.h, size[0]:self.w+size[0]]
+            if id == 3:
+                self.show(cut)
+                pass
+            img[0:self.h, size[0]:size[0]+self.w] = self.opt_seam(cut, next_img)
 
             # for next loop
             kpt_1 = kpt_2
             des_1 = des_2
 
-            self.show(img)
+            # self.show(img)
         return img
 
 
