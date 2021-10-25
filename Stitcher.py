@@ -8,7 +8,7 @@ class myStitcher:
     def __init__(self, img_list):
         self.img_list = img_list
         self.scale = 5
-        self.match_threhold = 0.4
+        self.match_threhold = 0.6
         self.matcher = cv2.FlannBasedMatcher()
 
     def show(self, img, name="", t=0):
@@ -198,10 +198,10 @@ class myStitcher:
         # self.show(self.mask * 255)
 
         self.mask = cv2.merge([mask, mask, mask])
-        cut = self.mask * cut + (1-self.mask) * img2
+        img2 = (1-self.mask) * img2
+        cut = self.mask * cut + img2
 
         return cut
-
 
     def start(self):
         # 第一张
@@ -250,9 +250,6 @@ class myStitcher:
             img = cv2.warpPerspective(img, H, (w_expand, h_expand))
 
             cut = img[0:self.h, size[0]:self.w+size[0]]
-            if id == 3:
-                self.show(cut)
-                pass
             img[0:self.h, size[0]:size[0]+self.w] = self.opt_seam(cut, next_img)
 
             # for next loop
@@ -260,6 +257,63 @@ class myStitcher:
             des_1 = des_2
 
             # self.show(img)
+        return img
+
+    def all_feature(self):
+        # 第一张
+        orient = 0
+        img = cv2.imread(self.img_list[0])
+        self.h = img.shape[0]
+        self.w = img.shape[1]
+
+        img1 = img
+        n = len(self.img_list)
+        for id in range(1, n):
+            kpt_1, des_1 = self.generate_feature(img1)
+            # # 获取位置信息
+            # pos_pre = self.exif_parse(self.img_list[0])
+            # pos_cur = self.exif_parse(self.img_list[1])
+            #
+            # # 获取位置信息
+            # if id + 1 < n:
+            #     pos_next = self.exif_parse(self.img_list[id+1])
+            #     cos = (pos_cur[0] - pos_pre[0]) * (pos_next[0] - pos_cur[0]) + \
+            #           (pos_cur[1] - pos_pre[1]) * (pos_next[1] - pos_cur[1])
+            #     orient = 0 if cos > 0 else 1
+            #
+            #     pos_pre = pos_cur
+            #     pos_cur = pos_next
+
+            next_img = cv2.imread(self.img_list[id])
+            # 计算特征点
+            kpt_2, des_2 = self.generate_feature(next_img)
+            # 特征点匹配、筛选
+            matched = self.keypoint_match(des_1, des_2)
+            if len(matched) < 4: break
+            # 还原特征点坐标
+            src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
+
+            # dts = dts + np.array([1000, 0])
+            # if id != 1:
+            #     src = src + np.array([1000, 0])
+
+            # 计算映射矩阵
+            H, _ = cv2.findHomography(src, dts, cv2.RANSAC)
+            size = self.get_warp_shape(H, img)
+            H[0, -1] += size[0]
+            w_expand = size[1] + size[0]
+            h_expand = size[2]
+            # 变换
+            img = cv2.warpPerspective(img, H, (w_expand, h_expand))
+
+            cut = img[0:self.h, size[0]:self.w+size[0]]
+            img[0:self.h, size[0]:size[0]+self.w], img1 = self.opt_seam(cut, next_img)
+
+            # for next loop
+            # kpt_1 = kpt_2
+            # des_1 = des_2
+
+            self.show(img)
         return img
 
 
@@ -270,7 +324,7 @@ if __name__ == '__main__':
     imgs = [os.path.join(root, name) for name in img_list]
 
     st = myStitcher(imgs[:6])
-    res = st.start()
-    st.show(res)
+    res = st.all_feature()
+    # st.show(res)
     cv2.imwrite("./img.jpg", res)
 

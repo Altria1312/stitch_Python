@@ -171,9 +171,9 @@ class Stitch:
         # # print("fushing:%f cond:%f dis:%f norm:%f expand:%f stitch:%f" % (t8-t3, t4-t3, t5-t4, t6-t5, t7-t6, t8-t7))
         # print("fushing:%f" % (t8-t3))
         print("total:%f"%(t8-t1))
-        # self.show(self.img)
+        self.show(self.img)
         #
-        cv2.imwrite("./imgg.jpg", self.img)
+        # cv2.imwrite("./imgg.jpg", self.img)
 
     def gauss(self, img, n):
         # 构建高斯金字塔
