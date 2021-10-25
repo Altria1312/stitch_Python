@@ -7,7 +7,7 @@ import os
 class myStitcher:
     def __init__(self, img_list):
         self.img_list = img_list
-        self.scale = 5
+        self.scale = 2
         self.match_threhold = 0.6
         self.matcher = cv2.FlannBasedMatcher()
 
@@ -323,8 +323,8 @@ if __name__ == '__main__':
     img_list = os.listdir(root)
     imgs = [os.path.join(root, name) for name in img_list]
 
-    st = myStitcher(imgs[:6])
-    res = st.all_feature()
-    # st.show(res)
-    cv2.imwrite("./img.jpg", res)
+    st = myStitcher(imgs[6:8])
+    res = st.start()
+    st.show(res)
+    # cv2.imwrite("./img.jpg", res)
 
