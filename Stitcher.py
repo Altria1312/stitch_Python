@@ -3,11 +3,13 @@ import numpy as np
 import piexif
 import time
 import os
+from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
 
 class myStitcher:
     def __init__(self, img_list):
         self.img_list = img_list
-        self.scale = 2
+        self.scale = 5
         self.match_threhold = 0.6
         self.matcher = cv2.FlannBasedMatcher()
 
@@ -316,6 +318,70 @@ class myStitcher:
             self.show(img)
         return img
 
+    def dual_homo(self):
+        img = cv2.imread(self.img_list[0])
+        self.h = img.shape[0]
+        self.w = img.shape[1]
+        kpt_1, des_1 = self.generate_feature(img)
+
+        next_img = cv2.imread(self.img_list[1])
+        # 计算特征点
+        kpt_2, des_2 = self.generate_feature(next_img)
+        # 特征点匹配、筛选
+        matched = self.keypoint_match(des_1, des_2)
+        # 还原特征点坐标
+        src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
+
+        x = np.mean(src, axis=0)
+        init = np.array([[x[0], 0],
+                        [x[0], img.shape[1]]])
+
+        pred = KMeans(n_clusters=2, random_state=9).fit_predict(src)
+        # plt.scatter(src[:, 0], src[:, 1], c=pred)
+        # plt.show()
+        pts_mask = pred > 0
+        src_g = src[pts_mask]
+        dts_g = dts[pts_mask]
+        pts_mask = np.bitwise_not(pts_mask)
+        src_d = src[pts_mask]
+        dts_d = dts[pts_mask]
+
+        H_g, _ = cv2.findHomography(src_g, dts_g, cv2.RANSAC)
+        H_d, _ = cv2.findHomography(src_d, dts_d, cv2.RANSAC)
+
+        img_g = cv2.warpPerspective(img, H_g, (img.shape[1], 2*img.shape[0]))
+        img_d = cv2.warpPerspective(img, H_d, (img.shape[1], 2*img.shape[0]))
+
+        cut_g = img_g[:img.shape[0]]
+        mask_g = cv2.cvtColor(cut_g, cv2.COLOR_BGR2GRAY)
+        mask_g = (mask_g > 0).astype(np.uint8)
+        mask_g = cv2.GaussianBlur(mask_g, (5,5), 1)
+        mask_g = cv2.merge([mask_g, mask_g, mask_g])
+        img_g[:img.shape[0]] = mask_g * next_img + (1-mask_g) * cut_g
+
+        cut_d = img_d[:img.shape[0]]
+        mask_d = cv2.cvtColor(cut_d, cv2.COLOR_BGR2GRAY)
+        mask_d = (mask_d > 0).astype(np.uint8)
+        mask_d = cv2.GaussianBlur(mask_d, (5,5), 1)
+        mask_d = cv2.merge([mask_d, mask_d, mask_d])
+        img_d[:img.shape[0]] = mask_d * next_img + (1-mask_d) * cut_d
+
+        cv2.imwrite("./imgg.jpg", img_g)
+        cv2.imwrite("./imgd.jpg", img_d)
+
+        w = 0.5
+        H = w * H_d + (1-w) * H_g
+        img = cv2.warpPerspective(img, H, (next_img.shape[1], 2*next_img.shape[0]))
+        cut = img[:next_img.shape[0]]
+        mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
+        mask = (mask > 0).astype(np.uint8)
+        mask = cv2.GaussianBlur(mask, (5,5), 1)
+        mask = cv2.merge([mask, mask, mask])
+        img[:next_img.shape[0]] = mask * next_img + (1-mask) * cut
+
+        cv2.imwrite("./img.jpg", img)
+
+        pass
 
 
 if __name__ == '__main__':
@@ -323,8 +389,7 @@ if __name__ == '__main__':
     img_list = os.listdir(root)
     imgs = [os.path.join(root, name) for name in img_list]
 
-    st = myStitcher(imgs[6:8])
-    res = st.start()
-    st.show(res)
+    st = myStitcher(imgs[3:5])
+    res = st.dual_homo()
     # cv2.imwrite("./img.jpg", res)
 
