@@ -129,10 +129,26 @@ def get_img_ori(img_list, n):
     is_change = ang < 0
     pass
 
+def alone_test():
+    a = np.arange(8).reshape((4, 2))
+    b = np.ones((2, 3,2))
+    c = np.apply_along_axis(A, 1, a, b=b)
+
+    d = np.argmax(c, axis=0)
+    e = c[d, np.arange(2).reshape((-1, 1)), np.arange(3).reshape((1,-1))]
+
+
+    pass
+
+def A(arr, b):
+    temp = b - arr
+    dist = np.linalg.norm(temp, ord=2, axis=-1)
+
+    return dist
+
 
 if __name__ == "__main__":
-    img_list = os.listdir("G:\\data\\20210817002")
-    get_img_ori(img_list, 30)
+    alone_test()
 
 
 
