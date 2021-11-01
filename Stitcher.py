@@ -9,9 +9,14 @@ import matplotlib.pyplot as plt
 class myStitcher:
     def __init__(self, img_list):
         self.img_list = img_list
-        self.scale = 1
+        self.scale = 5
         self.match_threhold = 0.6
         self.matcher = cv2.FlannBasedMatcher()
+        self.ransac_threshold1 = 2
+        self.ransac_threshold2 = self.ransac_threshold1 / 2
+        self.grid_cols = 6
+        self.grid_rows = 4
+
 
     def show(self, img, name="", t=0):
         cv2.namedWindow(name, cv2.WINDOW_NORMAL)
@@ -250,10 +255,10 @@ class myStitcher:
             #     src = src + np.array([1000, 0])
 
             # 计算映射矩阵
-            H, _ = cv2.findHomography(src, dts, cv2.RANSAC)
+            H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
 
 
-            # img[:, :next_img.shape[1]] = mask * next_img + (1-mask) * cut
+        # img[:, :next_img.shape[1]] = mask * next_img + (1-mask) * cut
             # size = self.get_warp_shape(H, img, 0)
             # H[0, -1] += size[0]
             # H[1, -1] += size[2]
@@ -270,13 +275,13 @@ class myStitcher:
             # des_1 = des_2
 
             # self.show(img)
-            img = cv2.warpPerspective(img, H, (2*next_img.shape[1], next_img.shape[0]))
-            cut = img[:, :next_img.shape[1]]
+            img = cv2.warpPerspective(img, H, (next_img.shape[1], 2*next_img.shape[0]))
+            cut = img[:next_img.shape[0]]
             mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
             mask = (mask > 0).astype(np.uint8)
             mask = cv2.GaussianBlur(mask, (5,5), 1)
             mask = cv2.merge([mask, mask, mask])
-            img[:, :next_img.shape[1]] = mask * next_img + (1-mask) * cut
+            img[:next_img.shape[0]] = mask * next_img + (1-mask) * cut
 
         cv2.imwrite("./img.jpg", img)
         return img
@@ -337,8 +342,8 @@ class myStitcher:
 
             self.show(img)
         return img
-
-    def dual_homo(self):
+    # ==================================
+    def DHW(self):
         img = cv2.imread(self.img_list[0])
         self.h = img.shape[0]
         self.w = img.shape[1]
@@ -411,18 +416,87 @@ class myStitcher:
         dist = 1 / np.linalg.norm(temp, ord=2, axis=-1)
 
         return dist
+    # ==================================
+    def FE(self):
+        # 第一张
+        orient = 0
+        img = cv2.imread(self.img_list[0])
+        self.h = img.shape[0]
+        self.w = img.shape[1]
+
+        kpt_1, des_1 = self.generate_feature(img)
+        # 获取位置信息
+        # pos_pre = self.exif_parse(self.img_list[0])
+        # pos_cur = self.exif_parse(self.img_list[1])
+
+        n = len(self.img_list)
+        for id in range(1, n):
+            next_img = cv2.imread(self.img_list[id])
+            # 获取位置信息
+            # if id + 1 < n:
+            #     pos_next = self.exif_parse(self.img_list[id+1])
+            #     cos = (pos_cur[0] - pos_pre[0]) * (pos_next[0] - pos_cur[0]) + \
+            #           (pos_cur[1] - pos_pre[1]) * (pos_next[1] - pos_cur[1])
+            #     orient = 0 if cos > 0 else 1
+            #
+            #     pos_pre = pos_cur
+            #     pos_cur = pos_next
+
+            # 计算特征点
+            kpt_2, des_2 = self.generate_feature(next_img)
+            # 特征点匹配、筛选
+            matched = self.keypoint_match(des_1, des_2)
+            if len(matched) < 4: break
+            # 还原特征点坐标
+            src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
+
+            # dts = dts + np.array([1000, 0])
+            # if id != 1:
+            #     src = src + np.array([1000, 0])
+
+            # 计算映射矩阵
+            H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
+            # 计算全局映射误差
+            warp_err = self.glob_warp_errs(H, src, dts)
+            err_cond = warp_err <= self.ransac_threshold2
+            # 特征点分区
+            grids_cond = self.assign_region(src)
+
+            np.linalg.lstsq()
+
+    def glob_warp_errs(self, H, src, dts):
+        # ======================
+        ex = np.ones((src.shape[0], 1))
+        temp = np.concatenate([src, ex], axis=1).T
+        warp = H @ temp
+        src = warp[:-1] / warp[-1]
+        err = np.abs(src.T - dts)
+        dist = np.sqrt(err[:, 0]**2 + err[:, 1]**2)
+
+        return dist
+
+    def assign_region(self, src):
+        space_col = self.w / self.grid_cols
+        space_row = self.h / self.grid_rows
+
+        # 计算所属行列
+        res = np.zeros_like(src)
+        res[:, 0] = src[:, 0] // space_col
+        res[:, 1] = src[:, 1] // space_row
+        return res.astype(np.int32)
+
+
 
 
 if __name__ == '__main__':
-    # root = "G:\\data\\20210817002"
-    # img_list = os.listdir(root)
-    # imgs = [os.path.join(root, name) for name in img_list]
+    root = "G:\\data\\20210817002"
+    img_list = os.listdir(root)
+    imgs = [os.path.join(root, name) for name in img_list]
 
-    img_list = ["./images/S6.jpg",
-                "./images/S5.jpg"]
+    # imgs = ["./images/S6.jpg",
+    #             "./images/S5.jpg"]
 
-    st = myStitcher(img_list)
-    # st.start()
-    st.dual_homo()
+    st = myStitcher(imgs[3:5])
+    st.start()
     # cv2.imwrite("./img.jpg", res)
 
