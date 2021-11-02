@@ -12,10 +12,10 @@ class myStitcher:
         self.scale = 5
         self.match_threhold = 0.6
         self.matcher = cv2.FlannBasedMatcher()
-        self.ransac_threshold1 = 2
+        self.ransac_threshold1 = 3
         self.ransac_threshold2 = self.ransac_threshold1 / 2
-        self.grid_cols = 6
-        self.grid_rows = 4
+        self.grid_cols = 10
+        self.grid_rows = 10
 
 
     def show(self, img, name="", t=0):
@@ -26,7 +26,7 @@ class myStitcher:
 
     def detect_compute(self, img):
         if cv2.__version__ == "4.5.1":
-            extractor = cv2.SIFT_create(1000)
+            extractor = cv2.SIFT_create(3000)
         else:
             extractor = cv2.xfeatures2d.SURF_create()
             # extractor = cv2.xfeatures2d_SIFT.create()
@@ -54,6 +54,8 @@ class myStitcher:
         target = np.zeros_like(ori)
         for i in range(len(matched)):
             ori[i, 0] = kpt1[matched[i].queryIdx].pt[0] * self.scale
+            if ori[i, 0] == ori[i-1, 0]:
+                continue
             ori[i, 1] = kpt1[matched[i].queryIdx].pt[1] * self.scale
             # ori.append((x, y))
 
@@ -455,14 +457,39 @@ class myStitcher:
             #     src = src + np.array([1000, 0])
 
             # 计算映射矩阵
-            H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
+            H, inliers = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
+            inliers = np.squeeze(inliers, axis=1).astype(np.bool)
             # 计算全局映射误差
-            warp_err = self.glob_warp_errs(H, src, dts)
-            err_cond = warp_err <= self.ransac_threshold2
+            src_in = src[inliers]
+            dts_in = dts[inliers]
+            warp_err = self.glob_warp_errs(H, src_in, dts_in)
+            err_cond = warp_err > self.ransac_threshold2
             # 特征点分区
-            grids_cond = self.assign_region(src)
+            grids_cond, centers = self.assign_grid(src_in)
+            feature_sets = self.assign_set(grids_cond, err_cond)
+            # 计算权重
+            w = self.cale_weights(centers, feature_sets, src_in)
 
-            np.linalg.lstsq()
+            src1 = np.concatenate([src_in, np.ones((src_in.shape[0], 1))], axis=1)
+            A = np.zeros((2*src_in.shape[0], 6))
+            A[::2, :3] = A[1::2, 3:6] = src1
+            # A[::2, -2:] = -src_in * dts_in[:, [0]]
+            # A[1::2, -2:] = -src_in * dts_in[:, [1]]
+
+            W_star =[]
+            for i in range(self.grid_rows):
+                for j in range(self.grid_cols):
+                    temp = y = np.zeros(2*src_in.shape[0])
+                    temp[::2] = temp[1::2] = w[i, j]
+                    y[::2] = dts_in[:, 0]
+                    y[1::2] = dts_in[:, 1]
+
+                    temp = np.expand_dims(temp, axis=1)
+                    h = np.linalg.lstsq(A*temp, y, rcond=None)
+
+                    W_star.append(h)
+            pass
+
 
     def glob_warp_errs(self, H, src, dts):
         # ======================
@@ -475,7 +502,7 @@ class myStitcher:
 
         return dist
 
-    def assign_region(self, src):
+    def assign_grid(self, src):
         space_col = self.w / self.grid_cols
         space_row = self.h / self.grid_rows
 
@@ -483,9 +510,57 @@ class myStitcher:
         res = np.zeros_like(src)
         res[:, 0] = src[:, 0] // space_col
         res[:, 1] = src[:, 1] // space_row
-        return res.astype(np.int32)
+        # 计算每个区域中心点
+        x = np.arange(space_col / 2, self.w, space_col)
+        y = np.arange(space_row / 2, self.h, space_row)
+        xx, yy = np.meshgrid(x, y)
+        xx = np.expand_dims(xx, axis=2)
+        yy = np.expand_dims(yy, axis=2)
+        centers = np.concatenate([xx, yy], axis=2)
 
+        return res.astype(np.int32), centers
 
+    def assign_set(self, grid_cond, err_cond):
+        res = np.zeros((self.grid_rows, self.grid_cols, err_cond.shape[0]))
+        for i in range(err_cond.shape[0]):
+            res[..., i] = 2 + err_cond[i]
+            res[grid_cond[i, 1], grid_cond[i, 1], i] = 0 + err_cond[i]
+
+        return res
+
+    def cale_weights(self, centers, feature_sets, src):
+        # 中心点到各特征点集的平均距离
+        res = np.zeros((self.grid_rows, self.grid_cols, src.shape[0]))
+        sigma = self.h / 3
+
+        mean_dists = np.zeros((self.grid_rows, self.grid_cols, 4))
+        for i in range(self.grid_rows):
+            for j in range(self.grid_cols):
+                dists = np.linalg.norm(centers[i, j] - src, axis=1)
+                for k in range(4):
+                    temp = feature_sets[i, j] == k
+                    if np.any(temp):
+                        mean_dists[i, j, k] = np.mean(dists[temp])
+                    else:
+                        mean_dists[i, j, k] = 0
+
+        d = np.sum(mean_dists, axis=-1)
+        mean_dists = np.where(mean_dists==0, self.w, mean_dists)
+
+        temp = -(mean_dists / sigma) ** 2
+        k = self.ransac_threshold2 / self.ransac_threshold1
+
+        for t in range(4):
+            idx = feature_sets == t
+            if np.any(temp):
+                if t % 2 == 0:
+                    f = (d - mean_dists[..., t]) / d * np.exp(k * temp[..., t])
+                else:
+                    f = (d - mean_dists[..., t]) / d * np.exp(temp[..., t])
+
+                np.putmask(res, idx, f)
+
+        return res
 
 
 if __name__ == '__main__':
@@ -496,7 +571,7 @@ if __name__ == '__main__':
     # imgs = ["./images/S6.jpg",
     #             "./images/S5.jpg"]
 
-    st = myStitcher(imgs[3:5])
-    st.start()
+    st = myStitcher(imgs[:2])
+    st.FE()
     # cv2.imwrite("./img.jpg", res)
 
