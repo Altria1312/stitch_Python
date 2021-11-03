@@ -16,6 +16,7 @@ class myStitcher:
         self.ransac_threshold2 = self.ransac_threshold1 / 2
         self.grid_cols = 10
         self.grid_rows = 10
+        self.gamma = 0.0025
 
 
     def show(self, img, name="", t=0):
@@ -276,7 +277,6 @@ class myStitcher:
             # kpt_1 = kpt_2
             # des_1 = des_2
 
-            # self.show(img)
             img = cv2.warpPerspective(img, H, (next_img.shape[1], 2*next_img.shape[0]))
             cut = img[:next_img.shape[0]]
             mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
@@ -284,6 +284,7 @@ class myStitcher:
             mask = cv2.GaussianBlur(mask, (5,5), 1)
             mask = cv2.merge([mask, mask, mask])
             img[:next_img.shape[0]] = mask * next_img + (1-mask) * cut
+
 
         cv2.imwrite("./img.jpg", img)
         return img
@@ -471,25 +472,34 @@ class myStitcher:
             w = self.cale_weights(centers, feature_sets, src_in)
 
             src1 = np.concatenate([src_in, np.ones((src_in.shape[0], 1))], axis=1)
-            A = np.zeros((2*src_in.shape[0], 6))
+            A = np.zeros((2*src_in.shape[0], 8))
             A[::2, :3] = A[1::2, 3:6] = src1
-            # A[::2, -2:] = -src_in * dts_in[:, [0]]
-            # A[1::2, -2:] = -src_in * dts_in[:, [1]]
+            A[::2, -2:] = -src_in * dts_in[:, [0]]
+            A[1::2, -2:] = -src_in * dts_in[:, [1]]
 
             W_star =[]
+            col_idx = np.linspace(0, self.w, self.grid_cols+1).astype(np.int32)
+            row_idx = np.linspace(0, self.h, self.grid_rows+1).astype(np.int32)
+            test = np.zeros((2*next_img.shape[0], next_img.shape[1], 3))
             for i in range(self.grid_rows):
                 for j in range(self.grid_cols):
-                    temp = y = np.zeros(2*src_in.shape[0])
+                    temp = np.zeros(2*src_in.shape[0])
+                    y = np.zeros(2*src_in.shape[0])
                     temp[::2] = temp[1::2] = w[i, j]
                     y[::2] = dts_in[:, 0]
                     y[1::2] = dts_in[:, 1]
 
                     temp = np.expand_dims(temp, axis=1)
-                    h = np.linalg.lstsq(A*temp, y, rcond=None)
+                    h = np.linalg.lstsq(A*temp, y, rcond=None)[0]
+                    h = np.append(h, 1).reshape((3,3))
+                    t = cv2.warpPerspective(img[row_idx[i]:row_idx[i+1], col_idx[i]:col_idx[i+1]],\
+                                                h, (next_img.shape[1], 2*next_img.shape[0]))
+                    self.show(t)
+                    # test += t
 
-                    W_star.append(h)
+                    # W_star.append(h)
+            self.show(test.astype(np.uint8))
             pass
-
 
     def glob_warp_errs(self, H, src, dts):
         # ======================
@@ -554,9 +564,9 @@ class myStitcher:
             idx = feature_sets == t
             if np.any(temp):
                 if t % 2 == 0:
-                    f = (d - mean_dists[..., t]) / d * np.exp(k * temp[..., t])
+                    f = (d - mean_dists[..., t]) / d * np.maximum(np.exp(k * temp[..., t]), self.gamma)
                 else:
-                    f = (d - mean_dists[..., t]) / d * np.exp(temp[..., t])
+                    f = (d - mean_dists[..., t]) / d * np.maximum(np.exp(temp[..., t]), self.gamma)
 
                 np.putmask(res, idx, f)
 
@@ -571,7 +581,7 @@ if __name__ == '__main__':
     # imgs = ["./images/S6.jpg",
     #             "./images/S5.jpg"]
 
-    st = myStitcher(imgs[:2])
+    st = myStitcher(imgs[3:5])
     st.FE()
     # cv2.imwrite("./img.jpg", res)
 
