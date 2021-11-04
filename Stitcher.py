@@ -259,7 +259,10 @@ class myStitcher:
 
             # 计算映射矩阵
             H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
-
+            inliers = np.squeeze(_, axis=1).astype(np.bool)
+            src = src[inliers]
+            dts = dts[inliers]
+            H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold2)
 
         # img[:, :next_img.shape[1]] = mask * next_img + (1-mask) * cut
             # size = self.get_warp_shape(H, img, 0)
@@ -477,23 +480,22 @@ class myStitcher:
             A[::2, -2:] = -src_in * dts_in[:, [0]]
             A[1::2, -2:] = -src_in * dts_in[:, [1]]
 
-            W_star =[]
             col_idx = np.linspace(0, self.w, self.grid_cols+1).astype(np.int32)
             row_idx = np.linspace(0, self.h, self.grid_rows+1).astype(np.int32)
             test = np.zeros((2*next_img.shape[0], next_img.shape[1], 3))
+            y = np.zeros(2*src_in.shape[0])
+            y[::2] = dts_in[:, 0]
+            y[1::2] = dts_in[:, 1]
             for i in range(self.grid_rows):
                 for j in range(self.grid_cols):
                     temp = np.zeros(2*src_in.shape[0])
-                    y = np.zeros(2*src_in.shape[0])
                     temp[::2] = temp[1::2] = w[i, j]
-                    y[::2] = dts_in[:, 0]
-                    y[1::2] = dts_in[:, 1]
 
                     temp = np.expand_dims(temp, axis=1)
                     h = np.linalg.lstsq(A*temp, y, rcond=None)[0]
                     h = np.append(h, 1).reshape((3,3))
-                    t = cv2.warpPerspective(img[row_idx[i]:row_idx[i+1], col_idx[i]:col_idx[i+1]],\
-                                                h, (next_img.shape[1], 2*next_img.shape[0]))
+                    t = cv2.warpPerspective(img[row_idx[i]:row_idx[i+1], col_idx[j]:col_idx[j+1]], \
+                                            h, (next_img.shape[1], 2*next_img.shape[0]))
                     self.show(t)
                     # test += t
 
@@ -507,7 +509,7 @@ class myStitcher:
         temp = np.concatenate([src, ex], axis=1).T
         warp = H @ temp
         src = warp[:-1] / warp[-1]
-        err = np.abs(src.T - dts)
+        err = src.T - dts
         dist = np.sqrt(err[:, 0]**2 + err[:, 1]**2)
 
         return dist
@@ -521,8 +523,8 @@ class myStitcher:
         res[:, 0] = src[:, 0] // space_col
         res[:, 1] = src[:, 1] // space_row
         # 计算每个区域中心点
-        x = np.arange(space_col / 2, self.w, space_col)
-        y = np.arange(space_row / 2, self.h, space_row)
+        x = np.arange(start=space_col / 2, stop=self.w, step=space_col)
+        y = np.arange(start=space_row / 2, stop=self.h, step=space_row)
         xx, yy = np.meshgrid(x, y)
         xx = np.expand_dims(xx, axis=2)
         yy = np.expand_dims(yy, axis=2)
@@ -534,14 +536,114 @@ class myStitcher:
         res = np.zeros((self.grid_rows, self.grid_cols, err_cond.shape[0]))
         for i in range(err_cond.shape[0]):
             res[..., i] = 2 + err_cond[i]
-            res[grid_cond[i, 1], grid_cond[i, 1], i] = 0 + err_cond[i]
+            res[grid_cond[i, 1], grid_cond[i, 0], i] = 0 + err_cond[i]
 
         return res
 
     def cale_weights(self, centers, feature_sets, src):
         # 中心点到各特征点集的平均距离
         res = np.zeros((self.grid_rows, self.grid_cols, src.shape[0]))
-        sigma = self.h / 3
+        sigma = self.h
+
+        mean_dists = np.zeros((self.grid_rows, self.grid_cols, 4))
+        for i in range(self.grid_rows):
+            for j in range(self.grid_cols):
+                dists = np.linalg.norm(centers[i, j] - src, axis=1)
+                for k in range(4):
+                    temp = feature_sets[i, j] == k
+                    if np.any(temp):
+                        mean_dists[i, j, k] = np.mean(dists[temp])
+
+        d = np.sum(mean_dists, axis=-1)
+        # mean_dists = np.where(mean_dists==0, self.w, mean_dists)
+
+        temp = -(mean_dists / sigma) ** 2
+        k = self.ransac_threshold2 / self.ransac_threshold1
+
+        for t in range(4):
+            idx = feature_sets == t
+            if np.any(temp):
+                if t % 2 == 0:
+                    f = (d - mean_dists[..., t]) / d * np.exp(k * temp[..., t])
+                else:
+                    f = (d - mean_dists[..., t]) / d * np.exp(temp[..., t])
+                f = np.tile(np.expand_dims(f, 2), (1,1,res.shape[-1]))
+                np.putmask(res, idx, f)
+                pass
+
+        return res
+
+    # ========================
+    def APAP(self):
+        # 第一张
+        img = cv2.imread(self.img_list[0])
+        self.h = img.shape[0]
+        self.w = img.shape[1]
+
+        kpt_1, des_1 = self.generate_feature(img)
+        # 获取位置信息
+        # pos_pre = self.exif_parse(self.img_list[0])
+        # pos_cur = self.exif_parse(self.img_list[1])
+
+        n = len(self.img_list)
+        for id in range(1, n):
+            next_img = cv2.imread(self.img_list[id])
+
+            # 计算特征点
+            kpt_2, des_2 = self.generate_feature(next_img)
+            # 特征点匹配、筛选
+            matched = self.keypoint_match(des_1, des_2)
+            if len(matched) < 4: break
+            # 还原特征点坐标
+            src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
+
+            # 计算映射矩阵
+            H, inliers = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
+            inliers = np.squeeze(inliers, axis=1).astype(np.bool)
+            # 计算全局映射误差
+            src_in = src[inliers]
+            dts_in = dts[inliers]
+            warp_err = self.glob_warp_errs(H, src_in, dts_in)
+            err_cond = warp_err > self.ransac_threshold2
+            # 特征点分区
+            grids_cond, centers = self.assign_grid(src_in)
+            feature_sets = self.assign_set(grids_cond, err_cond)
+            # 计算权重
+            w = self.apap_cale_weights(centers, feature_sets, src_in)
+
+            src1 = np.concatenate([src_in, np.ones((src_in.shape[0], 1))], axis=1)
+            A = np.zeros((2*src_in.shape[0], 8))
+            A[::2, :3] = A[1::2, 3:6] = src1
+            A[::2, -2:] = -src_in * dts_in[:, [0]]
+            A[1::2, -2:] = -src_in * dts_in[:, [1]]
+
+            col_idx = np.linspace(0, self.w, self.grid_cols+1).astype(np.int32)
+            row_idx = np.linspace(0, self.h, self.grid_rows+1).astype(np.int32)
+            test = np.zeros((2*next_img.shape[0], next_img.shape[1], 3))
+            y = np.zeros(2*src_in.shape[0])
+            y[::2] = dts_in[:, 0]
+            y[1::2] = dts_in[:, 1]
+            for i in range(self.grid_rows):
+                for j in range(self.grid_cols):
+                    temp = np.zeros(2*src_in.shape[0])
+                    temp[::2] = temp[1::2] = w[i, j]
+
+                    temp = np.expand_dims(temp, axis=1)
+                    h = np.linalg.lstsq(A*temp, y, rcond=None)[0]
+                    h = np.append(h, 1).reshape((3,3))
+                    t = cv2.warpPerspective(img[row_idx[i]:row_idx[i+1], col_idx[i]:col_idx[i+1]], \
+                                            h, (next_img.shape[1], 2*next_img.shape[0]))
+                    # self.show(t)
+                    test += t
+
+                    # W_star.append(h)
+            self.show(test.astype(np.uint8))
+            pass
+
+    def apap_cale_weights(self, centers, feature_sets, src):
+        # 中心点到各特征点集的平均距离
+        res = np.zeros((self.grid_rows, self.grid_cols, src.shape[0]))
+        sigma = self.h / self.grid_rows / 3
 
         mean_dists = np.zeros((self.grid_rows, self.grid_cols, 4))
         for i in range(self.grid_rows):
@@ -564,9 +666,9 @@ class myStitcher:
             idx = feature_sets == t
             if np.any(temp):
                 if t % 2 == 0:
-                    f = (d - mean_dists[..., t]) / d * np.maximum(np.exp(k * temp[..., t]), self.gamma)
+                    f = (d - mean_dists[..., t]) / d * np.exp(k * temp[..., t])
                 else:
-                    f = (d - mean_dists[..., t]) / d * np.maximum(np.exp(temp[..., t]), self.gamma)
+                    f = (d - mean_dists[..., t]) / d * np.exp(temp[..., t])
 
                 np.putmask(res, idx, f)
 
@@ -577,9 +679,6 @@ if __name__ == '__main__':
     root = "G:\\data\\20210817002"
     img_list = os.listdir(root)
     imgs = [os.path.join(root, name) for name in img_list]
-
-    # imgs = ["./images/S6.jpg",
-    #             "./images/S5.jpg"]
 
     st = myStitcher(imgs[3:5])
     st.FE()
