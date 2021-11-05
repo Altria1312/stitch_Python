@@ -4,6 +4,7 @@ import piexif
 import time
 import os
 from sklearn.cluster import KMeans
+from math import sqrt
 import matplotlib.pyplot as plt
 
 class myStitcher:
@@ -27,7 +28,7 @@ class myStitcher:
 
     def detect_compute(self, img):
         if cv2.__version__ == "4.5.1":
-            extractor = cv2.SIFT_create(3000)
+            extractor = cv2.SIFT_create(5000)
         else:
             extractor = cv2.xfeatures2d.SURF_create()
             # extractor = cv2.xfeatures2d_SIFT.create()
@@ -258,10 +259,12 @@ class myStitcher:
             #     src = src + np.array([1000, 0])
 
             # 计算映射矩阵
-            H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
+            src_norm = self.normalize(src)
+            dts_norm = self.normalize(dts)
+            H, _ = cv2.findHomography(src_norm, dts_norm, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
             inliers = np.squeeze(_, axis=1).astype(np.bool)
-            src = src[inliers]
-            dts = dts[inliers]
+            src = src_norm[inliers]
+            dts = dts_norm[inliers]
             H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold2)
 
         # img[:, :next_img.shape[1]] = mask * next_img + (1-mask) * cut
@@ -461,11 +464,13 @@ class myStitcher:
             #     src = src + np.array([1000, 0])
 
             # 计算映射矩阵
-            H, inliers = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
+            src_norm = self.normalize(src)
+            dts_norm = self.normalize(dts)
+            H, inliers = cv2.findHomography(src_norm, dts_norm, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
             inliers = np.squeeze(inliers, axis=1).astype(np.bool)
             # 计算全局映射误差
-            src_in = src[inliers]
-            dts_in = dts[inliers]
+            src_in = src_norm[inliers]
+            dts_in = dts_norm[inliers]
             warp_err = self.glob_warp_errs(H, src_in, dts_in)
             err_cond = warp_err > self.ransac_threshold2
             # 特征点分区
@@ -562,7 +567,7 @@ class myStitcher:
 
         for t in range(4):
             idx = feature_sets == t
-            if np.any(temp):
+            if np.any(idx):
                 if t % 2 == 0:
                     f = (d - mean_dists[..., t]) / d * np.exp(k * temp[..., t])
                 else:
@@ -598,6 +603,8 @@ class myStitcher:
             src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
 
             # 计算映射矩阵
+            src_norm = self.normalize(src)
+            dts_norm = self.normalize(dts)
             H, inliers = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
             inliers = np.squeeze(inliers, axis=1).astype(np.bool)
             # 计算全局映射误差
@@ -674,6 +681,23 @@ class myStitcher:
 
         return res
 
+    def normalize(self, pts):
+        pt_mean = np.mean(pts, axis=0)
+        norm = np.linalg.norm(pts-pt_mean, axis=1)
+        mean = np.mean(norm)
+        scale = sqrt(2) / (mean + 1e-8)
+
+        t = np.array([[scale, 0, -scale * pt_mean[0]],
+                      [0, scale, -scale * pt_mean[1]],
+                      [0, 0, 1]], dtype=np.float)
+        ex = np.ones((pts.shape[0], 1))
+        temp = np.column_stack([pts, ex])
+        res = t @ temp.T
+
+        return res[:-1].T
+
+
+
 
 if __name__ == '__main__':
     root = "G:\\data\\20210817002"
@@ -681,6 +705,6 @@ if __name__ == '__main__':
     imgs = [os.path.join(root, name) for name in img_list]
 
     st = myStitcher(imgs[3:5])
-    st.FE()
+    st.start()
     # cv2.imwrite("./img.jpg", res)
 
