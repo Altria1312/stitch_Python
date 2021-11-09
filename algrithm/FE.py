@@ -124,7 +124,7 @@ class FE(myStitcher):
     def cale_weights(self, centers, feature_sets, src):
         # 中心点到各特征点集的平均距离
         res = np.zeros((self.grid_rows, self.grid_cols, src.shape[0]))
-        sigma = self.h
+        sigma = self.h / self.grid_rows
 
         mean_dists = np.zeros((self.grid_rows, self.grid_cols, 4))
         for i in range(self.grid_rows):

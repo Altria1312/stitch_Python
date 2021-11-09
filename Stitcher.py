@@ -14,8 +14,8 @@ class myStitcher:
         self.matcher = cv2.FlannBasedMatcher()
         self.ransac_threshold1 = 3
         self.ransac_threshold2 = self.ransac_threshold1 / 2
-        self.grid_cols = 50
-        self.grid_rows = 50
+        self.grid_cols = 20
+        self.grid_rows = 20
         self.gamma = 0.0025
 
 
@@ -27,7 +27,7 @@ class myStitcher:
 
     def detect_compute(self, img):
         if cv2.__version__ == "4.5.1":
-            extractor = cv2.SIFT_create(5000)
+            extractor = cv2.SIFT_create()
         else:
             extractor = cv2.xfeatures2d.SURF_create()
             # extractor = cv2.xfeatures2d_SIFT.create()
@@ -79,6 +79,13 @@ class myStitcher:
         return (x, y)
 
     def get_warp_shape(self, H, img, orient=1):
+        '''
+
+        :param H:
+        :param img:
+        :param orient: 1表示竖直拼接， 0为横向拼接
+        :return:
+        '''
         # 变换后的区域
         pts = np.array([[0, img.shape[1], img.shape[1], 0],
                         [0, 0, img.shape[0], img.shape[0]],
@@ -93,12 +100,12 @@ class myStitcher:
             left = 0 if xy_min[0] >= 0 else -xy_min[0]
             right = self.w if xy_max[0] <= self.w else xy_max[0]
             buttom = xy_max[1]
-            return left, right, 0, buttom
+            return np.array([[left, right, 0, buttom]])
         elif orient == 0:
             up = 0 if xy_min[1] >= 0 else -xy_min[1]
             buttom = self.h if xy_max[1] <= self.h else xy_max[1]
             right = xy_max[0]
-            return 0, right, up, buttom
+            return np.array([[0, right, up, buttom]])
 
 
     def weighted_blend(self):
@@ -224,17 +231,19 @@ class myStitcher:
         # 第一张
         orient = 0
         img = cv2.imread(self.img_list[0])
+        # img = cv2.resize(img, (3126, 2084))
         self.h = img.shape[0]
         self.w = img.shape[1]
-
         kpt_1, des_1 = self.generate_feature(img)
         # 获取位置信息
         # pos_pre = self.exif_parse(self.img_list[0])
         # pos_cur = self.exif_parse(self.img_list[1])
 
         n = len(self.img_list)
+        size = np.zeros((1, 4))
         for id in range(1, n):
             next_img = cv2.imread(self.img_list[id])
+            # next_img = cv2.resize(next_img, (3126, 2084))
             # 获取位置信息
             # if id + 1 < n:
             #     pos_next = self.exif_parse(self.img_list[id+1])
@@ -252,7 +261,7 @@ class myStitcher:
             if len(matched) < 4: break
             # 还原特征点坐标
             src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
-
+            src += size[:, ::2]
             # dts = dts + np.array([1000, 0])
             # if id != 1:
             #     src = src + np.array([1000, 0])
@@ -264,29 +273,32 @@ class myStitcher:
             dts = dts[inliers]
             H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold2)
 
-        # img[:, :next_img.shape[1]] = mask * next_img + (1-mask) * cut
-            # size = self.get_warp_shape(H, img, 0)
+            size = self.get_warp_shape(H, img, 1)
             # H[0, -1] += size[0]
             # H[1, -1] += size[2]
-            # w_expand = size[1] + size[0]
-            # h_expand = size[2] + size[3]
-            # # 变换
-            # img = cv2.warpPerspective(img, H, (w_expand, h_expand))
-            #
+            w_expand = size[0, 1] + size[0, 0]
+            h_expand = size[0, 2] + size[0, 3]
+            # 变换
+            img = cv2.warpPerspective(img, H, (w_expand, h_expand))
+
+            img[size[0, 2]:self.h+size[0, 2], size[0, 0]:size[0, 0]+self.w] = next_img
+            self.show(img)
+
             # cut = img[size[2]:self.h+size[2], size[0]:self.w+size[0]]
             # img[size[2]:self.h+size[2], size[0]:size[0]+self.w] = self.opt_seam(cut, next_img)
-            #
-            # # for next loop
-            # kpt_1 = kpt_2
-            # des_1 = des_2
 
-            img = cv2.warpPerspective(img, H, (next_img.shape[1], 2*next_img.shape[0]))
-            cut = img[:next_img.shape[0]]
-            mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
-            mask = (mask > 0).astype(np.uint8)
-            mask = cv2.GaussianBlur(mask, (5,5), 1)
-            mask = cv2.merge([mask, mask, mask])
-            img[:next_img.shape[0]] = mask * next_img + (1-mask) * cut
+            # for next loop
+            kpt_1 = kpt_2
+            des_1 = des_2
+
+            # img = cv2.warpPerspective(img, H, (next_img.shape[1], 2*next_img.shape[0]))
+            # img[:next_img.shape[0]] = next_img
+            # # cut = img[:next_img.shape[0]]
+            # # mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
+            # # mask = (mask > 0).astype(np.uint8)
+            # # mask = cv2.GaussianBlur(mask, (5,5), 1)
+            # # mask = cv2.merge([mask, mask, mask])
+            # # img[:next_img.shape[0]] = mask * next_img + (1-mask) * cut
 
 
         cv2.imwrite("./img.jpg", img)
@@ -349,6 +361,80 @@ class myStitcher:
             self.show(img)
         return img
 
+    def start_cut(self):
+        # 第一张
+        orient = 0
+        img = cv2.imread(self.img_list[0])
+        self.h = img.shape[0]
+        self.w = img.shape[1]
+        cut1 = img[2340:3380, 3360:5020]
+        kpt_1, des_1 = self.detect_compute(cut1)
+        # 获取位置信息
+        # pos_pre = self.exif_parse(self.img_list[0])
+        # pos_cur = self.exif_parse(self.img_list[1])
+
+        n = len(self.img_list)
+        for id in range(1, n):
+            next_img = cv2.imread(self.img_list[id])
+            cut2 = next_img[3830:4168, 3420:5100]
+            # 获取位置信息
+            # if id + 1 < n:
+            #     pos_next = self.exif_parse(self.img_list[id+1])
+            #     cos = (pos_cur[0] - pos_pre[0]) * (pos_next[0] - pos_cur[0]) + \
+            #           (pos_cur[1] - pos_pre[1]) * (pos_next[1] - pos_cur[1])
+            #     orient = 0 if cos > 0 else 1
+            #
+            #     pos_pre = pos_cur
+            #     pos_cur = pos_next
+
+            # 计算特征点
+            kpt_2, des_2 = self.detect_compute(cut2)
+            # 特征点匹配、筛选
+            matched = self.keypoint_match(des_1, des_2)
+            if len(matched) < 4: break
+            # 还原特征点坐标
+            src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
+            src += np.array([[3360, 2340]])
+            dts += np.array([[3420, 3830]])
+
+            # dts = dts + np.array([1000, 0])
+            # if id != 1:
+            #     src = src + np.array([1000, 0])
+
+            # 计算映射矩阵
+            H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
+            inliers = np.squeeze(_, axis=1).astype(np.bool)
+            src = src[inliers]
+            dts = dts[inliers]
+            H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold2)
+
+            # img[:, :next_img.shape[1]] = mask * next_img + (1-mask) * cut
+            # size = self.get_warp_shape(H, img, 0)
+            # H[0, -1] += size[0]
+            # H[1, -1] += size[2]
+            # w_expand = size[1] + size[0]
+            # h_expand = size[2] + size[3]
+            # # 变换
+            # img = cv2.warpPerspective(img, H, (w_expand, h_expand))
+            #
+            # cut = img[size[2]:self.h+size[2], size[0]:self.w+size[0]]
+            # img[size[2]:self.h+size[2], size[0]:size[0]+self.w] = self.opt_seam(cut, next_img)
+            #
+            # # for next loop
+            # kpt_1 = kpt_2
+            # des_1 = des_2
+
+            img = cv2.warpPerspective(img, H, (next_img.shape[1], 2*next_img.shape[0]))
+            cut = img[:next_img.shape[0]]
+            mask = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
+            mask = (mask > 0).astype(np.uint8)
+            mask = cv2.GaussianBlur(mask, (5,5), 1)
+            mask = cv2.merge([mask, mask, mask])
+            img[:next_img.shape[0]] = mask * next_img + (1-mask) * cut
+
+
+        cv2.imwrite("./img.jpg", img)
+        return img
 
 
 
@@ -359,7 +445,11 @@ if __name__ == '__main__':
     img_list = os.listdir(root)
     imgs = [os.path.join(root, name) for name in img_list]
 
-    st = myStitcher(imgs[3:5])
+    # imgs = [r"G:\APAP-Image-Stitching-main\images\demo3\prague1.jpg",
+    #         r"G:\APAP-Image-Stitching-main\images\demo3\prague2.jpg"]
+
+
+    st = myStitcher(imgs[:7])
     st.start()
     # cv2.imwrite("./img.jpg", res)
 
