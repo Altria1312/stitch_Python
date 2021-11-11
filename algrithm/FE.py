@@ -95,17 +95,29 @@ class FE(myStitcher):
 
         return dist
 
-    def assign_grid(self, src):
-        space_col = self.w / self.grid_cols
-        space_row = self.h / self.grid_rows
+    def assign_grid(self, src, shape=None):
+        if shape is None:
+            space_col = self.w / self.grid_cols
+            space_row = self.h / self.grid_rows
+            # 计算所属行列
+            res = np.zeros_like(src)
+            res[:, 0] = src[:, 0] // space_col
+            res[:, 1] = src[:, 1] // space_row
+            # 计算每个区域中心点
+            x = np.arange(start=space_col / 2, stop=self.w, step=space_col)
+            y = np.arange(start=space_row / 2, stop=self.h, step=space_row)
+        else:
+            space_col = shape[1] / self.grid_cols
+            space_row = shape[0] / self.grid_rows
+            # 计算所属行列
+            res = np.zeros_like(src)
+            res[:, 0] = src[:, 0] // space_col
+            res[:, 1] = src[:, 1] // space_row
+            # 计算每个区域中心点
+            x = np.arange(start=space_col / 2, stop=shape[1], step=space_col)
+            y = np.arange(start=space_row / 2, stop=shape[0], step=space_row)
 
-        # 计算所属行列
-        res = np.zeros_like(src)
-        res[:, 0] = src[:, 0] // space_col
-        res[:, 1] = src[:, 1] // space_row
-        # 计算每个区域中心点
-        x = np.arange(start=space_col / 2, stop=self.w, step=space_col)
-        y = np.arange(start=space_row / 2, stop=self.h, step=space_row)
+
         xx, yy = np.meshgrid(x, y)
         xx = np.expand_dims(xx, axis=2)
         yy = np.expand_dims(yy, axis=2)

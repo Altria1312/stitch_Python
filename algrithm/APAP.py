@@ -17,18 +17,37 @@ class APAP(FE):
     # ========================
     def start(self):
         # 第一张
+        orient = 1
         img = cv2.imread(self.img_list[0])
         self.h = img.shape[0]
         self.w = img.shape[1]
 
         kpt_1, des_1 = self.generate_feature(img)
         # 获取位置信息
-        # pos_pre = self.exif_parse(self.img_list[0])
-        # pos_cur = self.exif_parse(self.img_list[1])
+        pos_pre = self.exif_parse(self.img_list[0])
+        pos_cur = self.exif_parse(self.img_list[1])
 
         n = len(self.img_list)
+        size = np.zeros((1, 4))
         for id in range(1, n):
+            # 获取位置信息
+            if id > 1:
+                pos_next = self.exif_parse(self.img_list[id])
+                a = pos_cur - pos_pre
+                b = pos_cur - pos_next
+                cos = np.sum(a*b) / (np.linalg.norm(a)*np.linalg.norm(b))
+                if cos > -0.95 and cos > 0:
+                    orient = 1 - orient
+
+                pos_pre = pos_cur
+                pos_cur = pos_next
+
             next_img = cv2.imread(self.img_list[id])
+            if orient == 0:
+                next_img = cv2.rotate(next_img, cv2.ROTATE_180)
+                invert = True
+            else:
+                invert = False
 
             # 计算特征点
             kpt_2, des_2 = self.generate_feature(next_img)
@@ -37,14 +56,17 @@ class APAP(FE):
             if len(matched) < 4: break
             # 还原特征点坐标
             src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
-
+            src += size[0, ::2]
             # 计算映射矩阵
 
             H, inliers = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
             inliers = np.squeeze(inliers, axis=1).astype(np.bool)
             # 计算全局映射误差
+            size = self.get_warp_shape(H, img, 1)
             src_in = src[inliers]
-            dts_in = dts[inliers]
+            dts_in = dts[inliers] + size[0, ::2]
+            w_expand = size[0, 1] + size[0, 0]
+            h_expand = size[0, 2] + size[0, 3]
             # # ===========================================================================
             # t1, src1 = self.centroid_normalize(src_in)
             # t2, dts1 = self.centroid_normalize(dts_in)
@@ -67,7 +89,7 @@ class APAP(FE):
             warp_err = self.glob_warp_errs(H, src_in, dts_in)
             err_cond = warp_err > self.ransac_threshold2
             # 特征点分区
-            grids_cond, centers = self.assign_grid(src_in)
+            grids_cond, centers = self.assign_grid(src_in, img.shape[:-1])
             feature_sets = self.assign_set(grids_cond, err_cond)
             # 计算权重
             w = self.apap_cale_weights(centers, feature_sets, src_in)
@@ -79,21 +101,39 @@ class APAP(FE):
 
             A = self.gen_A(src2, dts2)
 
-            param = (A, t1, t2, c1, c2, w)
             # #　画网格
             # for i in range(1,col_idx.shape[0]):
             #     cv2.line(img, (col_idx[i]-1, 0), (col_idx[i]-1, self.h-1), (0, 0, 255), 2)
             # for j in range(1,row_idx.shape[0]):
             #     cv2.line(img, (0, row_idx[j]-1), (self.w-1, row_idx[j]-1), (0, 0, 255), 2)
-            test = np.zeros((2*next_img.shape[0], next_img.shape[1], 3))
+            temp = np.zeros((h_expand, w_expand, 3))
+            col_idx = np.linspace(0, w_expand, self.grid_cols+1).astype(np.int32)
+            row_idx = np.linspace(0, h_expand, self.grid_rows+1).astype(np.int32)
             for i in range(self.grid_rows):
-                test += self.warp_local(i, src_in, img, next_img, param)
+                for j in range(self.grid_cols):
+                    W = np.zeros(2*src_in.shape[0])
+                    W[::2] = W[1::2] = w[i, j]
+                    W = np.expand_dims(W, axis=1)
 
+                    h = self.gen_h(A, t1, t2, c1, c2, W)
 
-            # self.show(test.astype(np.uint8))
-            test[:self.h, :self.w] = next_img
-            cv2.imwrite("./img_apap10.jpg", test.astype(np.uint8))
-            pass
+                    mask = np.zeros_like(img)
+                    mask[row_idx[i]:row_idx[i+1], col_idx[j]:col_idx[j+1]] = 1
+                    warp = img * mask
+
+                    temp += cv2.warpPerspective(warp, h, (w_expand, h_expand))
+            temp = temp.astype(np.uint8)
+            cut = temp[size[0, 2]:self.h+size[0, 2], size[0, 0]:self.w+size[0, 0]]
+            temp[size[0, 2]:self.h+size[0, 2], size[0, 0]:self.w+size[0, 0]] = self.opt_seam(cut, next_img, invert)
+            img = temp.copy()
+
+            # for next loop
+            kpt_1 = kpt_2
+            des_1 = des_2
+
+            self.show(img)
+        cv2.imwrite("./img_apap10.jpg", temp.astype(np.uint8))
+        pass
 
     def apap_cale_weights(self, centers, feature_sets, src):
         # 中心点到各特征点集的平均距离
@@ -162,12 +202,12 @@ class APAP(FE):
 
         return h
 
-    def warp_local(self, i, src_in, img, next_img, prama):
+    def warp_local(self, i, src_in, img, size, prama):
         A, t1, t2, c1, c2, w = prama
 
-        col_idx = np.linspace(0, self.w, self.grid_cols+1).astype(np.int32)
-        row_idx = np.linspace(0, self.h, self.grid_rows+1).astype(np.int32)
-        test = np.zeros((2*next_img.shape[0], next_img.shape[1], 3), dtype=np.int32)
+        col_idx = np.linspace(0, size[1], self.grid_cols+1).astype(np.int32)
+        row_idx = np.linspace(0, size[0], self.grid_rows+1).astype(np.int32)
+        test = np.zeros((size[0], size[1], 3), dtype=np.int32)
         for j in range(self.grid_cols):
             temp = np.zeros(2*src_in.shape[0])
             temp[::2] = temp[1::2] = w[i, j]
@@ -180,9 +220,10 @@ class APAP(FE):
             warp = img * mask
 
             t = cv2.warpPerspective(warp, \
-                                    h, (next_img.shape[1], 2*next_img.shape[0]))
+                                    h, (size[1], size[0]))
             # self.show(t)
             test += t
+
         return test
 
 
@@ -195,5 +236,5 @@ if __name__ == '__main__':
     # imgs = [r"G:\APAP-Image-Stitching-main\images\demo3\prague2.jpg",
     #         r"G:\APAP-Image-Stitching-main\images\demo3\prague1.jpg"]
 
-    st = APAP(imgs[3:5])
+    st = APAP(imgs[24:44])
     st.start()
