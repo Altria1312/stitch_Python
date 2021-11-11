@@ -195,5 +195,5 @@ if __name__ == '__main__':
     # imgs = [r"G:\APAP-Image-Stitching-main\images\demo3\prague2.jpg",
     #         r"G:\APAP-Image-Stitching-main\images\demo3\prague1.jpg"]
 
-    st = APAP(imgs[5:7])
+    st = APAP(imgs[3:5])
     st.start()
