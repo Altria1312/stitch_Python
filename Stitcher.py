@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import piexif
-
+import time
 import os
 from math import sqrt
 import matplotlib.pyplot as plt
@@ -212,23 +212,17 @@ class myStitcher:
         # res = res.astype(np.uint8) * 255
         # ttt = res.max()
         # self.show(res)
-
         opt_idx = np.argmin(self.path_energy)
         opt_path = self.path_row[opt_idx]
 
         rg = np.tile(np.arange(self.h), [self.w, 1]).T
         mask = np.greater(rg, opt_path).astype(np.uint8)
-        mask = self.seam_blend(mask, opt_path, 50)
-        # rg = np.arange(h)
-        # for j in range(w):
-        #     col = rg > opt_path[j]
-        #     self.mask[:, j] = self.mask[:, j] * col
 
-        # self.show(self.mask * 255)
+        mask = self.seam_blend(mask, opt_path, 50)
         if invert:
             mask = 1 - mask
-        self.mask = cv2.merge([mask, mask, mask])
-        tt = cut
+        # self.mask = cv2.merge([mask, mask, mask])
+        self.mask = np.concatenate([mask, mask, mask], axis=2)
         cut = self.mask * cut + (1-self.mask) * img2
 
         # temp = np.column_stack([tt, img2, (1-self.mask) * img2])
@@ -246,7 +240,7 @@ class myStitcher:
 
         x = np.apply_along_axis(self.assign_weight, 0, temp, bend)
 
-        return x
+        return np.expand_dims(x, axis=2)
 
     def assign_weight(self, x, bend):
         up = int(max(0, x[self.h]-bend))
