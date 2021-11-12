@@ -103,22 +103,7 @@ class Stitch:
         mins = np.maximum(xy_min, [0, 0]).astype(np.int32)
         maxs = np.minimum(xy_max, [self.img1.shape[1], self.img1.shape[0]]).astype(np.int32)
         self.tl_br = (mins, maxs)
-        # # 曝光差异
-        # ori = np.round(ori).astype(np.int32)
-        # target = np.round(target).astype(np.int32)
-        #
-        # i1 = cv2.GaussianBlur(self.img1, (5,5), 1)
-        # i2 = cv2.GaussianBlur(self.img2, (5,5), 1)
-        # bgr1 = i1[ori[:,1], ori[:,0]]
-        # bgr2 = i2[target[:,1], target[:,0]]
-        #
-        # res = np.zeros((3, 2))
-        # for i in range(3):
-        #     A = np.vstack([bgr2[:, i], np.ones(bgr2.shape[0])]).T
-        #     res[i,0], res[i,1] = np.linalg.lstsq(A, bgr1[:, i], rcond=None)[0]
-        #
-        # self.img2 = self.img2 * res[:, 0] + res[:, 1]
-        # self.img2 = self.img2.astype(np.uint8)
+
 
 
     def stitch(self):

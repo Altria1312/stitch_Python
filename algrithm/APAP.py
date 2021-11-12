@@ -106,7 +106,7 @@ class APAP(FE):
             #     cv2.line(img, (col_idx[i]-1, 0), (col_idx[i]-1, self.h-1), (0, 0, 255), 2)
             # for j in range(1,row_idx.shape[0]):
             #     cv2.line(img, (0, row_idx[j]-1), (self.w-1, row_idx[j]-1), (0, 0, 255), 2)
-            temp = np.zeros((h_expand, w_expand, 3))
+            temp = np.zeros((h_expand, w_expand, 3), dtype=np.int32)
             col_idx = np.linspace(0, w_expand, self.grid_cols+1).astype(np.int32)
             row_idx = np.linspace(0, h_expand, self.grid_rows+1).astype(np.int32)
             for i in range(self.grid_rows):
@@ -126,13 +126,14 @@ class APAP(FE):
             cut = temp[size[0, 2]:self.h+size[0, 2], size[0, 0]:self.w+size[0, 0]]
             temp[size[0, 2]:self.h+size[0, 2], size[0, 0]:self.w+size[0, 0]] = self.opt_seam(cut, next_img, invert)
             img = temp.copy()
+            del temp
 
             # for next loop
             kpt_1 = kpt_2
             des_1 = des_2
 
-            self.show(img)
-        cv2.imwrite("./img_apap10.jpg", temp.astype(np.uint8))
+            # self.show(img)
+        cv2.imwrite("./img_apap10.jpg", img.astype(np.uint8))
         pass
 
     def apap_cale_weights(self, centers, feature_sets, src):
@@ -236,5 +237,5 @@ if __name__ == '__main__':
     # imgs = [r"G:\APAP-Image-Stitching-main\images\demo3\prague2.jpg",
     #         r"G:\APAP-Image-Stitching-main\images\demo3\prague1.jpg"]
 
-    st = APAP(imgs[24:44])
+    st = APAP(imgs[15:44])
     st.start()
