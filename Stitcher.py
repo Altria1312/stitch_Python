@@ -1,4 +1,5 @@
 import cv2
+from PIL import Image
 import numpy as np
 import piexif
 import time
@@ -108,15 +109,15 @@ class myStitcher:
 
         return np.array([[left, right, up, buttom]])
 
-    def weighted_blend(self):
+    def weighted_blend(self, cut, img2):
         pass
 
     def opt_seam(self, cut, img2, invert=1):
         src1 = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
         src2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
 
-        E_color = cv2.absdiff(src2, src1)
-
+        E_color = cv2.absdiff(src2, src1).astype(np.float32)
+        #======================
         # sob_x = np.array([[-2, 0, 2],
         #                   [-1, 0, 1],
         #                   [-2, 0, 2]])
@@ -130,27 +131,28 @@ class myStitcher:
         # src2_y = cv2.filter2D(src2, cv2.CV_32F, sob_y)
         #
         # E_geometry = np.sqrt((src1_x - src2_x)**2 + (src1_y - src2_y)**2)
+        #======================
+        # dx = cv2.Sobel(E_color, -1, 1, 0)
+        # dy = cv2.Sobel(E_color, -1, 0, 1)
+        # E_geometry = cv2.magnitude(dx.astype(np.float32), dy.astype(np.float32))
+        #======================
+        E_geometry = cv2.Sobel(E_color, cv2.CV_32F, 1, 1)
 
-        dx = cv2.Sobel(E_color, -1, 1, 0)
-        dy = cv2.Sobel(E_color, -1, 1, 1)
-        texture = cv2.magnitude(dx.astype(np.float32), dy.astype(np.float32))
-        E_geometry = cv2.convertScaleAbs(texture)
-
-        self.E = 0.1 * E_color + 0.9 * E_geometry
+        self.E = cv2.addWeighted(E_color, 0.1, E_geometry, 0.9, 0)
 
         # 确定初始位置
         t = int(self.w/2)
         path_row = [i for i in range(self.h) if src1[i, t] > 0]
         path_row = np.array(path_row).reshape(-1, 1)
-        self.path_row = np.tile(path_row[1:-1], self.w)
+
+        # self.path_row = np.tile(path_row[1:-1], self.w)
         # self.min_val = np.min(path_row) + 1
         # self.max_val = np.max(path_row)
 
         path_row = np.tile(path_row, self.w)
-        self.path_row = path_row[1:-1]
+        self.path_row = path_row[1:-1].copy()
         # 初始能量
         self.path_energy = np.squeeze(self.E[self.path_row[:,0], 0])
-
         # # 单线程
         # for i in range(1, w):
         #     mids = self.path_row[:, i-1]
@@ -176,7 +178,7 @@ class myStitcher:
         lefts_E = self.E[self.path_row[:, 0]-1]
         rights_E = self.E[self.path_row[:, 0]+1]
         temp_E = cv2.merge([lefts_E, mids_E, rights_E])
-        idx = np.argmin(temp_E, axis=-1)
+        idx = np.argmin(temp_E, axis=-1).astype(np.int32)
         # rg_x = np.tile(np.arange(w), [self.path_row.shape[0], 1])
         rg_y = np.tile(np.arange(path_row.shape[0]), [self.w,1]).T
         # temp_E = temp_E[rg_y, rg_x-1, idx]
@@ -191,7 +193,6 @@ class myStitcher:
             self.path_row[:, i] = path_row[rg_y[prev, i], i]
             self.path_energy += self.E[self.path_row[:, i], i]
             prev = rg_y[prev, i]
-
         # # 最小割算法
         # graph = maxflow.GraphInt()
         # nodeids = graph.add_grid_nodes((max_val-min_val+1, w))
@@ -211,18 +212,18 @@ class myStitcher:
         # res = graph.get_grid_segments(nodeids)
         # res = res.astype(np.uint8) * 255
         # ttt = res.max()
-        # self.show(res)
+        # self.show(res)dsdbs
         opt_idx = np.argmin(self.path_energy)
         opt_path = self.path_row[opt_idx]
 
         rg = np.tile(np.arange(self.h), [self.w, 1]).T
         mask = np.greater(rg, opt_path).astype(np.uint8)
-
         mask = self.seam_blend(mask, opt_path, 50)
         if invert:
             mask = 1 - mask
-        # self.mask = cv2.merge([mask, mask, mask])
-        self.mask = np.concatenate([mask, mask, mask], axis=2)
+
+        # self.mask = np.concatenate([mask, mask, mask], axis=2)
+        self.mask = cv2.merge([mask, mask, mask])
         cut = self.mask * cut + (1-self.mask) * img2
 
         # temp = np.column_stack([tt, img2, (1-self.mask) * img2])
@@ -231,16 +232,15 @@ class myStitcher:
         return cut.astype(np.uint8)
 
     def seam_blend(self,mask, opt_path, bend):
-        dist = np.arange(-bend, bend+1).reshape(-1, 1)
+        dist = np.arange(-bend, bend+1, dtype=np.float32).reshape(-1, 1)
         dist = (bend - dist) / (2*bend)
+
         weight = 0.5 * (1 + np.cos(dist*np.pi))
         weight = np.tile(weight, (1, opt_path.shape[0]))
 
-        temp = np.row_stack((mask, opt_path, weight))
+        temp = np.row_stack((mask, opt_path, weight)).astype(np.float32)
 
-        x = np.apply_along_axis(self.assign_weight, 0, temp, bend)
-
-        return np.expand_dims(x, axis=2)
+        return np.apply_along_axis(self.assign_weight, 0, temp, bend)
 
     def assign_weight(self, x, bend):
         up = int(max(0, x[self.h]-bend))
@@ -314,14 +314,12 @@ class myStitcher:
             if is_coner:
                 is_coner = not is_coner
                 continue
-
             next_img = cv2.imread(self.img_list[id])
             if orient == 0:
                 next_img = cv2.rotate(next_img, cv2.ROTATE_180)
                 invert = True
             else:
                 invert = False
-
 
             # 计算特征点
             kpt_2, des_2 = self.generate_feature(next_img)
@@ -330,16 +328,13 @@ class myStitcher:
             if len(matched) < 4: break
             # 还原特征点坐标
             src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
-
             # 计算映射矩阵
             H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
-            inliers = np.squeeze(_, axis=1).astype(np.bool)
+            inliers = np.squeeze(_, axis=1).astype(np.bool_)
             src = src[inliers] + size[0, ::2]
             dts = dts[inliers]
 
             # next_img, img = self.exposure_adj(next_img, img, dts, src)
-
-            H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold2)
             size = self.get_warp_shape(H, img, 1)
             # H[0, -1] += size[0]
             # H[1, -1] += size[2]
@@ -349,11 +344,9 @@ class myStitcher:
             H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold2)
             # 变换
             img = cv2.warpPerspective(img, H, (w_expand, h_expand))
-            # img[size[0, 2]:self.h+size[0, 2], size[0, 0]:size[0, 0]+self.w] = next_img
 
             cut = img[size[0, 2]:self.h+size[0, 2], size[0, 0]:self.w+size[0, 0]]
             img[size[0, 2]:self.h+size[0, 2], size[0, 0]:size[0, 0]+self.w] = self.opt_seam(cut, next_img, invert)
-
             # img = cv2.warpPerspective(img, H, (img.shape[1], img.shape[0]+next_img.shape[0]))
             # img[:next_img.shape[0], :next_img.shape[1]] = next_img
             # cut = img[:next_img.shape[0]]
@@ -363,7 +356,8 @@ class myStitcher:
             # mask = cv2.merge([mask, mask, mask])
             # img[:next_img.shape[0]] = mask * next_img + (1-mask) * cut
 
-            self.show(img)
+
+            # self.show(img)
             # for next loop
             kpt_1 = kpt_2
             des_1 = des_2
@@ -438,8 +432,11 @@ if __name__ == '__main__':
     # imgs = [r"G:\APAP-Image-Stitching-main\images\demo3\prague1.jpg",
     #         r"G:\APAP-Image-Stitching-main\images\demo3\prague2.jpg"]
 
-
-    st = myStitcher(imgs[24:26])
+    st = myStitcher(imgs[:10])
+    t1 = time.time()
     st.start()
+    t2 = time.time()
+    print(t2 - t1)
+    pass
     # cv2.imwrite("./img.jpg", res)
 
