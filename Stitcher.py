@@ -7,6 +7,14 @@ import os
 from math import sqrt
 import matplotlib.pyplot as plt
 
+def compute_epipole(F):
+    """
+    利用F计算右极点，若要计算左极点，则分解F.T
+    """
+    U, S, V = np.linalg.svd(F)
+    e = V[-1]
+    return e / e[2]
+
 class myStitcher:
     def __init__(self, img_list):
         self.img_list = img_list
@@ -283,6 +291,25 @@ class myStitcher:
 
         return img1, img2
 
+    def find_Fundamantal(self, src, dts, img1, img2):
+        h, w = img2.shape[:-1]
+        F, _ = cv2.findFundamentalMat(src, dts, cv2.RANSAC, 1)
+        inliers = np.squeeze(_, axis=1).astype(np.bool_)
+        src_in = src[inliers]
+        dts_in = dts[inliers]
+
+        src2 = cv2.computeCorrespondEpilines(src_in, 1, F)
+        dts2 = cv2.computeCorrespondEpilines(dts_in, 2, F)
+        dts2 = dts2.reshape((-1, 3))
+        src2 = src2.reshape((-1, 3))
+        for i in range(10):
+            cv2.line(img1, (0, int(dts2[i, 2]/dts2[i, 0])), (w, int(dts2[i, 2]/dts2[i, 1])), (0, 255, 0), 5)
+            cv2.line(img2, (0, int(src2[i, 2]/src2[i, 0])), (w, int(src2[i, 2]/src2[i, 1])), (0, 255, 0), 5)
+
+        self.show(img2)
+
+        return
+
     def start(self):
         # 第一张
         orient = 1
@@ -314,6 +341,7 @@ class myStitcher:
             if is_coner:
                 is_coner = not is_coner
                 continue
+
             next_img = cv2.imread(self.img_list[id])
             if orient == 0:
                 next_img = cv2.rotate(next_img, cv2.ROTATE_180)
@@ -330,6 +358,7 @@ class myStitcher:
             src, dts = self.reset_kpt_coord(matched, kpt_1, kpt_2)
             # 计算映射矩阵
             H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold1)
+
             inliers = np.squeeze(_, axis=1).astype(np.bool_)
             src = src[inliers] + size[0, ::2]
             dts = dts[inliers]
@@ -342,6 +371,7 @@ class myStitcher:
             h_expand = size[0, 2] + size[0, 3]
             dts += size[0, ::2]
             H, _ = cv2.findHomography(src, dts, cv2.RANSAC, ransacReprojThreshold=self.ransac_threshold2)
+            self.find_Fundamantal(src, dts, img, next_img)
             # 变换
             img = cv2.warpPerspective(img, H, (w_expand, h_expand))
 
@@ -432,7 +462,7 @@ if __name__ == '__main__':
     # imgs = [r"G:\APAP-Image-Stitching-main\images\demo3\prague1.jpg",
     #         r"G:\APAP-Image-Stitching-main\images\demo3\prague2.jpg"]
 
-    st = myStitcher(imgs[:10])
+    st = myStitcher(imgs[:2])
     t1 = time.time()
     st.start()
     t2 = time.time()
