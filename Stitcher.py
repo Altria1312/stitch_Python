@@ -1,6 +1,7 @@
 import cv2
 from PIL import Image
 import numpy as np
+# import maxflow
 import piexif
 import time
 import os
@@ -145,8 +146,9 @@ class myStitcher:
         # E_geometry = cv2.magnitude(dx.astype(np.float32), dy.astype(np.float32))
         #======================
         E_geometry = cv2.Sobel(E_color, cv2.CV_32F, 1, 1)
+        E_geometry = cv2.convertScaleAbs(E_geometry).astype(np.float32)
 
-        self.E = cv2.addWeighted(E_color, 0.1, E_geometry, 0.9, 0)
+        self.E = cv2.addWeighted(E_color, 0.9, E_geometry, 0.1, 0)
 
         # 确定初始位置
         t = int(self.w/2)
@@ -229,7 +231,7 @@ class myStitcher:
         mask = self.seam_blend(mask, opt_path, 50)
         if invert:
             mask = 1 - mask
-
+        # self.show(mask*255)
         # self.mask = np.concatenate([mask, mask, mask], axis=2)
         self.mask = cv2.merge([mask, mask, mask])
         cut = self.mask * cut + (1-self.mask) * img2
@@ -259,6 +261,64 @@ class myStitcher:
         x[up:down+1] = x[self.h+1+up_dist:x.shape[0]-down_dist]
 
         return x[:self.h]
+
+    def seam_graphcut(self, cut, img2, invert=1):
+        src1 = cv2.cvtColor(cut, cv2.COLOR_BGR2GRAY)
+        src2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+
+        E_color = cv2.absdiff(src2, src1).astype(np.float32)
+        E_geometry = cv2.Sobel(E_color, cv2.CV_32F, 1, 1)
+
+        self.E = cv2.addWeighted(E_color, 0.1, E_geometry, 0.9, 0)
+
+        # 确定初始位置
+        t = int(self.w/2)
+        path_row = [i for i in range(self.h) if src1[i, t] > 0]
+        path_row = np.array(path_row).reshape(-1, 1)
+
+        # self.path_row = np.tile(path_row[1:-1], self.w)
+        min_val = path_row[0,0] + 1
+        max_val = path_row[-1,0]
+
+        path_row = np.tile(path_row, self.w)
+        self.path_row = path_row[1:-1].copy()
+        # 初始能量
+        self.path_energy = np.squeeze(self.E[self.path_row[:,0], 0])
+
+        # 最小割算法
+        graph = maxflow.GraphFloat()
+        nodeids = graph.add_grid_nodes((max_val-min_val, self.w))
+        structure = np.array([[0, 0, 0],
+                              [0, 0, 1],
+                              [0, 1, 0]])
+        weights = self.E[min_val:max_val]
+        # cv2.normalize(weights, weights, alpha=0, beta=10000, norm_type=cv2.NORM_MINMAX)
+        graph.add_grid_tedges(nodeids[:, 0], 1000000, 0)
+        graph.add_grid_tedges(nodeids[:, -1], 0, 1000000)
+        graph.add_grid_edges(nodeids, weights, structure, 0)
+
+        graph.maxflow()
+        res = graph.get_grid_segments(nodeids)
+        res = res.astype(np.uint8) * 255
+        self.show(res)
+
+        opt_idx = np.argmin(self.path_energy)
+        opt_path = self.path_row[opt_idx]
+
+        rg = np.tile(np.arange(self.h), [self.w, 1]).T
+        mask = np.greater(rg, opt_path).astype(np.uint8)
+        mask = self.seam_blend(mask, opt_path, 50)
+        if invert:
+            mask = 1 - mask
+
+        # self.mask = np.concatenate([mask, mask, mask], axis=2)
+        self.mask = cv2.merge([mask, mask, mask])
+        cut = self.mask * cut + (1-self.mask) * img2
+
+        # temp = np.column_stack([tt, img2, (1-self.mask) * img2])
+        # self.show(temp)
+
+        return cut.astype(np.uint8)
 
     def exposure_adj(self, img1, img2, src, dts):
         # 曝光差异
@@ -299,14 +359,19 @@ class myStitcher:
         dts_in = dts[inliers]
 
         src2 = cv2.computeCorrespondEpilines(src_in, 1, F)
+        src2 = src2.reshape((-1, 3))
         dts2 = cv2.computeCorrespondEpilines(dts_in, 2, F)
         dts2 = dts2.reshape((-1, 3))
-        src2 = src2.reshape((-1, 3))
         for i in range(10):
-            cv2.line(img1, (0, int(dts2[i, 2]/dts2[i, 0])), (w, int(dts2[i, 2]/dts2[i, 1])), (0, 255, 0), 5)
-            cv2.line(img2, (0, int(src2[i, 2]/src2[i, 0])), (w, int(src2[i, 2]/src2[i, 1])), (0, 255, 0), 5)
+            cv2.line(img1, (0, int(-dts2[i, 2]/dts2[i, 1])), (w, int(-(dts2[i, 0]*self.w+dts2[i, 2])/dts2[i, 1])), (0, 255, 0), 5)
+            cv2.line(img2, (0, int(-src2[i, 2]/src2[i, 1])), (w, int(-(src2[i, 0]*self.w+src2[i, 2])/src2[i, 1])), (0, 255, 0), 5)
 
-        self.show(img2)
+        cv2.namedWindow("img1", cv2.WINDOW_NORMAL)
+        cv2.namedWindow("img2", cv2.WINDOW_NORMAL)
+        cv2.imshow("img1", img1)
+        cv2.imshow("img2", img2)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
         return
 
@@ -393,7 +458,7 @@ class myStitcher:
             des_1 = des_2
 
 
-        cv2.imwrite("./results/img12.jpg", img)
+        cv2.imwrite("./results/img15.jpg", img)
         return img
 
     def all_feature(self):
@@ -462,7 +527,7 @@ if __name__ == '__main__':
     # imgs = [r"G:\APAP-Image-Stitching-main\images\demo3\prague1.jpg",
     #         r"G:\APAP-Image-Stitching-main\images\demo3\prague2.jpg"]
 
-    st = myStitcher(imgs[:2])
+    st = myStitcher(imgs[:12])
     t1 = time.time()
     st.start()
     t2 = time.time()
